@@ -31,7 +31,22 @@ async def root():
     return {"status": "awake"}
 
 def split_text(text: str, size: int = 900):
-    return [text[i:i+size] for i in range(0, len(text), size)]
+    """Аккуратно режет текст по строкам, не ломая код и разметку посередине"""
+    if len(text) <= size:
+        return [text]
+    
+    chunks = []
+    while len(text) > 0:
+        if len(text) <= size:
+            chunks.append(text)
+            break
+        # Ищем перенос строки, чтобы не рвать код внутри строки
+        split_idx = text.rfind('\n', 0, size)
+        if split_idx == -1:
+            split_idx = size
+        chunks.append(text[:split_idx])
+        text = text[split_idx:].lstrip()
+    return chunks
 
 def fetch_background(session_id: str, user_text: str):
     try:
@@ -67,7 +82,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 if not chunks:
                     del CACHE[session_id]
                 else:
-                    current_chunk += " Скажи «дальше», чтобы послушать продолжение."
+                    current_chunk += "\n\nСкажи «дальше», чтобы послушать продолжение."
                 return {
                     "version": body["version"],
                     "session": body["session"],
@@ -93,7 +108,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                     if not chunks:
                         del CACHE[session_id]
                     else:
-                        current_chunk += " Скажи «дальше», чтобы послушать продолжение."
+                        current_chunk += "\n\nСкажи «дальше», чтобы послушать продолжение."
                     answer = current_chunk
                 else:
                     answer = "Кэш пуст."
@@ -128,7 +143,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             chunks = split_text(answer, 900)
             first_chunk = chunks.pop(0)
             CACHE[session_id] = chunks
-            first_chunk += " Ответ длинный, скажи «дальше», чтобы продолжить."
+            first_chunk += "\n\nОтвет длинный, скажи «дальше», чтобы продолжить."
             answer = first_chunk
 
         return {
