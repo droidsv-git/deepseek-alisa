@@ -10,7 +10,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
-# Хранилище для длинных ответов, разбитых на части (для диалога по шагам)
+# Хранилище для длинных ответов
 SESSION_CHUNKS = {}
 
 async def self_ping():
@@ -30,7 +30,6 @@ async def root():
     return {"status": "awake"}
 
 def split_text(text: str, size: int = 900):
-    """Режет длинный текст на куски, безопасные для лимита Яндекса"""
     return [text[i:i+size] for i in range(0, len(text), size)]
 
 @app.post("/")
@@ -40,13 +39,16 @@ async def main(request: Request):
     user_text = (req_data.get("original_utterance") or req_data.get("command") or "").lower().strip()
     session_id = body["session"]["session_id"]
 
-    # Если пользователь просит продолжить предыдущий ответ
-    if user_text in ["дальше", "продолжи", "продолжить", "еще"] and session_id in SESSION_CHUNKS:
+    # Список фраз, по которым выдаем следующий кусок сохраненного ответа
+    continuation_triggers = ["дальше", "продолжи", "продолжить", "еще", "готово", "готово?", "что там", "что там?"]
+
+    # Если пользователь просит продолжить и в памяти есть куски для этой сессии
+    if any(trigger in user_text for trigger in continuation_triggers) and session_id in SESSION_CHUNKS:
         chunks = SESSION_CHUNKS[session_id]
         if chunks:
-            current_chunk = chunks.pop(0) # Берем следующую часть
+            current_chunk = chunks.pop(0)
             if not chunks:
-                del SESSION_CHUNKS[session_id] # Если части кончились, удаляем сессию
+                del SESSION_CHUNKS[session_id]
             return {
                 "version": body["version"],
                 "session": body["session"],
@@ -57,7 +59,7 @@ async def main(request: Request):
                 }
             }
 
-    # Новый запрос к модели
+    # Новый запрос к модели (если это не продолжение или памяти нет)
     try:
         response = requests.post(
             DEEPSEEK_API_URL,
@@ -66,7 +68,7 @@ async def main(request: Request):
                 "model": "openai/gpt-oss-120b",
                 "messages": [{"role": "user", "content": user_text}],
             },
-            timeout=2.8 # Укладываемся в тайм-аут Яндекса на первый ответ
+            timeout=2.8
         )
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
@@ -78,10 +80,8 @@ async def main(request: Request):
         chunks = split_text(answer, 900)
         first_chunk = chunks.pop(0)
         
-        # Сохраняем оставшиеся части в память
         SESSION_CHUNKS[session_id] = chunks
         
-        # Дописываем подсказку для пользователя
         first_chunk += " Ответ длинный. Скажи «дальше», чтобы послушать продолжение."
         tts_text = first_chunk
     else:
