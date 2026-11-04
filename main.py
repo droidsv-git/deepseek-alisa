@@ -8,7 +8,6 @@ app = FastAPI()
 DEEPSEEK_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# Твой реальный публичный адрес на Render для само-пинга
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
 # Кэш для хранения порций ответов по session_id
@@ -17,7 +16,7 @@ CACHE = {}
 async def self_ping():
     """Каждые 10 минут пингует сам себя, чтобы Render не засыпал"""
     while True:
-        await asyncio.sleep(600)  # 600 секунд = 10 минут
+        await asyncio.sleep(600)
         try:
             requests.get(RENDER_URL, timeout=5)
         except Exception:
@@ -25,7 +24,6 @@ async def self_ping():
 
 @app.on_event("startup")
 async def startup_event():
-    # Запускаем фоновую задачу само-пинга при старте приложения
     asyncio.create_task(self_ping())
 
 @app.get("/")
@@ -33,11 +31,9 @@ async def root():
     return {"status": "awake"}
 
 def split_text(text: str, size: int = 900):
-    """Режет длинный текст на порции для голосовой выдачи"""
     return [text[i:i+size] for i in range(0, len(text), size)]
 
 def fetch_background(session_id: str, user_text: str):
-    """Фоновый досыл запроса, если синхронный не уложился в 3 секунды"""
     try:
         response = requests.post(
             DEEPSEEK_API_URL,
@@ -62,43 +58,59 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     user_text = (req_data.get("original_utterance") or req_data.get("command") or "").lower().strip()
     session_id = body["session"]["session_id"]
 
-    # 1. Обработка стоп-слов
-    stop_words = ["хватит", "стоп", "остановись", "завязывай"]
-    if any(word in user_text for word in stop_words):
-        if session_id in CACHE:
-            del CACHE[session_id]
-        answer = "Остановлено."
-        return {
-            "version": body["version"],
-            "session": body["session"],
-            "response": {"end_session": False, "text": answer, "tts": answer}
-        }
-
-    # 2. Если в кэше есть готовые порции — отдаем следующую
-    if session_id in CACHE and CACHE[session_id] != "PENDING":
-        chunks = CACHE[session_id]
-        if chunks:
-            current_chunk = chunks.pop(0)
-            if not chunks:
-                del CACHE[session_id]
+    # 1. Продолжение — строго по слову «дальше»
+    if user_text in ["дальше", "дальше?"]:
+        if session_id in CACHE and CACHE[session_id] != "PENDING":
+            chunks = CACHE[session_id]
             if chunks:
-                current_chunk += " Скажи что угодно, чтобы послушать продолжение."
-            return {
-                "version": body["version"],
-                "session": body["session"],
-                "response": {"end_session": False, "text": current_chunk, "tts": current_chunk}
-            }
-
-    # 3. Если в кэше висит статус PENDING (фоновый процесс еще думает)
-    if session_id in CACHE and CACHE[session_id] == "PENDING":
-        answer = "Еще думаю над ответом, спроси «Готово?» через секунду."
+                current_chunk = chunks.pop(0)
+                if not chunks:
+                    del CACHE[session_id]
+                else:
+                    current_chunk += " Скажи «дальше», чтобы послушать продолжение."
+                return {
+                    "version": body["version"],
+                    "session": body["session"],
+                    "response": {"end_session": False, "text": current_chunk, "tts": current_chunk}
+                }
+        answer = "Нет сохраненного продолжения. Задай новый вопрос."
         return {
             "version": body["version"],
             "session": body["session"],
             "response": {"end_session": False, "text": answer, "tts": answer}
         }
 
-    # 4. Пробуем получить ответ синхронно, укладываясь в лимит Яндекса (~2.7 секунды)
+    # 2. Вывод из кэша / проверка статуса — строго по слову «готово»
+    if user_text in ["готово", "готово?"]:
+        if session_id in CACHE:
+            status = CACHE[session_id]
+            if status == "PENDING":
+                answer = "Еще думаю над ответом, спроси «Готово?» через секунду."
+            else:
+                chunks = status
+                if chunks:
+                    current_chunk = chunks.pop(0)
+                    if not chunks:
+                        del CACHE[session_id]
+                    else:
+                        current_chunk += " Скажи «дальше», чтобы послушать продолжение."
+                    answer = current_chunk
+                else:
+                    answer = "Кэш пуст."
+                    del CACHE[session_id]
+        else:
+            answer = "Нет активных фоновых задач."
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": answer, "tts": answer}
+        }
+
+    # 3. Любое другое слово — стираем старый кэш и считаем это новым запросом
+    if session_id in CACHE:
+        del CACHE[session_id]
+
+    # Синхронный запрос в пределах лимита Яндекса (2.7 сек)
     try:
         response = requests.post(
             DEEPSEEK_API_URL,
@@ -107,12 +119,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 "model": "openai/gpt-oss-120b",
                 "messages": [{"role": "user", "content": user_text}],
             },
-            timeout=2.7  # Строго меньше 3 секунд Яндекса
+            timeout=2.7
         )
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
 
-        # Если ответ длинный — режем на порции
         if len(answer) > 900:
             chunks = split_text(answer, 900)
             first_chunk = chunks.pop(0)
@@ -127,11 +138,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         }
 
     except Exception:
-        # Если вылетели по таймауту (>2.7с), ставим заглушку и уходим в фон
+        # Если думает дольше 2.7 сек — уходим в фон, отдаем заглушку
         CACHE[session_id] = "PENDING"
         background_tasks.add_task(fetch_background, session_id, user_text)
         
-        answer = "Вопрос сложный, я обдумываю его в фоне. Спроси «Готово?» через пару секунд."
+        answer = "Вопрос сложный, обдумываю в фоне. Спроси «Готово?» через пару секунд."
         return {
             "version": body["version"],
             "session": body["session"],
