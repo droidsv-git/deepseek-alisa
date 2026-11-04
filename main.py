@@ -4,7 +4,7 @@ import requests
 
 app = FastAPI()
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
 @app.post("/")
@@ -16,7 +16,7 @@ async def main(request: Request):
         DEEPSEEK_API_URL,
         headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
         json={
-            "model": "deepseek-chat",
+            "model": "llama-3.3-70b-versatile"
             "messages": [{"role": "user", "content": user_text}],
         }
     )
