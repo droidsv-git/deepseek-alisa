@@ -1,23 +1,21 @@
 import os
 import asyncio
 import requests
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request
 
 app = FastAPI()
 
 DEEPSEEK_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# Твой реальный публичный адрес на Render для само-пинга
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
-# Кэш для фоновых ответов, чтобы Яндекс не падал по таймауту
-CACHE = {}
+# Хранилище для длинных ответов, разбитых на части (для диалога по шагам)
+SESSION_CHUNKS = {}
 
 async def self_ping():
-    """Каждые 10 минут пингует сам себя, чтобы Render не засыпал"""
     while True:
-        await asyncio.sleep(600)  # 600 секунд = 10 минут
+        await asyncio.sleep(600)
         try:
             requests.get(RENDER_URL, timeout=5)
         except Exception:
@@ -25,15 +23,41 @@ async def self_ping():
 
 @app.on_event("startup")
 async def startup_event():
-    # Запускаем фоновую задачу само-пинга при старте
     asyncio.create_task(self_ping())
 
 @app.get("/")
 async def root():
     return {"status": "awake"}
 
-def fetch_groq_background(session_id: str, user_text: str):
-    """Фоновый запрос к Groq, не ограниченный 3 секундами Яндекса"""
+def split_text(text: str, size: int = 900):
+    """Режет длинный текст на куски, безопасные для лимита Яндекса"""
+    return [text[i:i+size] for i in range(0, len(text), size)]
+
+@app.post("/")
+async def main(request: Request):
+    body = await request.json()
+    req_data = body.get("request", {})
+    user_text = (req_data.get("original_utterance") or req_data.get("command") or "").lower().strip()
+    session_id = body["session"]["session_id"]
+
+    # Если пользователь просит продолжить предыдущий ответ
+    if user_text in ["дальше", "продолжи", "продолжить", "еще"] and session_id in SESSION_CHUNKS:
+        chunks = SESSION_CHUNKS[session_id]
+        if chunks:
+            current_chunk = chunks.pop(0) # Берем следующую часть
+            if not chunks:
+                del SESSION_CHUNKS[session_id] # Если части кончились, удаляем сессию
+            return {
+                "version": body["version"],
+                "session": body["session"],
+                "response": {
+                    "end_session": False,
+                    "text": current_chunk,
+                    "tts": current_chunk
+                }
+            }
+
+    # Новый запрос к модели
     try:
         response = requests.post(
             DEEPSEEK_API_URL,
@@ -42,40 +66,33 @@ def fetch_groq_background(session_id: str, user_text: str):
                 "model": "openai/gpt-oss-120b",
                 "messages": [{"role": "user", "content": user_text}],
             },
-            timeout=30
+            timeout=2.8 # Укладываемся в тайм-аут Яндекса на первый ответ
         )
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
-        CACHE[session_id] = answer
-    except Exception as e:
-        CACHE[session_id] = f"Ошибка генерации: {e}"
+    except Exception:
+        answer = "Не успеваю ответить за отведенное время, попробуй еще раз."
 
-@app.post("/")
-async def main(request: Request, background_tasks: BackgroundTasks):
-    body = await request.json()
-    req_data = body.get("request", {})
-    user_text = req_data.get("original_utterance") or req_data.get("command") or ""
-    session_id = body["session"]["session_id"]
-
-    # 1. Если ответ для этой сессии уже сгенерирован в фоне — отдаем его Алисе
-    if session_id in CACHE and CACHE[session_id] != "PENDING":
-        answer = CACHE.pop(session_id)
-    
-    # 2. Если он еще генерируется
-    elif session_id in CACHE and CACHE[session_id] == "PENDING":
-        answer = "Секунду, еще дописываю ответ, повтори запрос."
-
-    # 3. Первый запрос: запускаем фонового воркера и мгновенно отвечаем Яндексу
+    # Если текст длиннее 900 символов — режем на части
+    if len(answer) > 900:
+        chunks = split_text(answer, 900)
+        first_chunk = chunks.pop(0)
+        
+        # Сохраняем оставшиеся части в память
+        SESSION_CHUNKS[session_id] = chunks
+        
+        # Дописываем подсказку для пользователя
+        first_chunk += " Ответ длинный. Скажи «дальше», чтобы послушать продолжение."
+        tts_text = first_chunk
     else:
-        CACHE[session_id] = "PENDING"
-        background_tasks.add_task(fetch_groq_background, session_id, user_text)
-        answer = "Минутку, размышляю над ответом... Спроси «Что там?» через пару секунд."
+        tts_text = answer
 
     return {
         "version": body["version"],
         "session": body["session"],
         "response": {
             "end_session": False,
-            "text": answer
+            "text": tts_text,
+            "tts": tts_text
         }
     }
