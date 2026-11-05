@@ -2,6 +2,7 @@ import os
 import asyncio
 import requests
 import time
+import psutil  # ДОБАВЛЕНО ДЛЯ КОМАНДЫ РЕСУРСОВ
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -136,7 +137,6 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
-    # ИЗМЕНЕНО: Если история не передается (None), то этот блок не выполнится
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -168,7 +168,6 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
     if model_key == "опенроутер":
-        # ИЗМЕНЕНО: Передаем None вместо history, чтобы отключить историю ТОЛЬКО для этой модели
         return send_openrouter_request(user_text, timeout_val, None) 
     raise Exception("Неизвестная модель.")
 
@@ -210,6 +209,67 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "")
 
+    # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
+    clean_cmd = user_text.strip(".,!? ")
+    clean_cmd_no_spaces = "".join(clean_cmd.split())
+    
+    resource_commands = [
+        "ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп",
+        "ресурсы сервер", "ресурс сервера", "ресурс сервер", "ресурсы кибер ноотроп",
+        "покажи ресурсы", "загрузка сервера", "нагрузка сервера", "состояние сервера",
+        "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон", 
+        "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
+        "ресурсы кибер", "кибер ресурсы", "ресурсы сервера нооттроп", "ресурсы сервер ноотроп",
+        "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп",
+        "мониторинг сервера", "мониторинг", "нагрузка", "ресурсы"
+    ]
+    resource_commands_no_spaces = [cmd.replace(" ", "") for cmd in resource_commands]
+    
+    if clean_cmd_no_spaces in resource_commands_no_spaces:
+        try:
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            mem = psutil.virtual_memory()
+            total_ram_gb = round(mem.total / (1024**3), 1)
+            used_ram_percent = mem.percent
+            
+            net1 = psutil.net_io_counters()
+            time.sleep(0.2)
+            net2 = psutil.net_io_counters()
+            
+            sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 0.2) / 1024, 1)
+            recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 0.2) / 1024, 1)
+
+            cpu_model = "Неизвестный процессор"
+            try:
+                with open("/proc/cpuinfo", "r") as f:
+                    for line in f:
+                        if "model name" in line:
+                            cpu_model = line.split(":")[1].strip()
+                            break
+            except Exception:
+                pass
+            
+            text_answer = (
+                f"Ресурсы вашего сервера кибер ноотроп. "
+                f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
+                f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
+                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+            )
+            
+            tts_answer = (
+                f"Ресурсы вашего сервера кибер ноотроп. sil <[600]> "
+                f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
+                f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
+                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+            )
+        except Exception:
+            text_answer = "Ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
+            tts_answer = text_answer
+            
+        return {"version": body["version"], "session": body["session"],
+                "response": {"end_session": False, "text": text_answer, "tts": tts_answer}}
+    # ---------------------------------
+
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
@@ -219,14 +279,28 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": menu_text, "tts": menu_text}}
 
-    if user_text in ["вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию"]:
+    # --- РАСШИРЕННЫЙ СПИСОК "ВЕРНУТЬ АЛИСУ" ---
+    clean_cmd = user_text.strip(".,!? ")
+    clean_cmd_no_spaces = "".join(clean_cmd.split())
+    
+    alisa_commands = [
+        "вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию",
+        "верни алису", "верни алиса", "вернись алиса", "верну алису", "вернуть алиса",
+        "вернись к алисе", "отключи модель", "сбрось модель", "сброс модели", "алису верни",
+        "алису вернуть", "назад к алисе", "стандартная алиса", "без модели", "отключить алису",
+        "отключи алису", "завершить", "выйти", "хватит"
+    ]
+    alisa_commands_no_spaces = [cmd.replace(" ", "") for cmd in alisa_commands]
+    
+    if clean_cmd_no_spaces in alisa_commands_no_spaces:
         if user_id in USER_MODELS: del USER_MODELS[user_id]
         if user_id in HISTORY: del HISTORY[user_id]
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
+    # ---------------------------------------------------
 
     found_model_key = None
-    # ИЗМЕНЕНО: ДОБАВЛЕНЫ ВАРИАНТЫ ПРОИЗНОШЕНИЯ ОПЕНРОУТЕРА
+    # --- РАСШИРЕННЫЙ СПИСОК ОПЕНРОУТЕРА ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
@@ -234,13 +308,29 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "опен роутер", "опенроутер", "openrouter", "open router", 
             "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
             "опен рутер", "опенрутер", "опен раутер", "опенраутер",
-            "роутер", "апи роутер", "опен раутор"
+            "опен рутор", "опенрутор", "апи роутер", "апин роутер",
+            "опен раутор", "опенраутор", "опен раутэр", "роутер",
+            "опен рутэр", "опэн рутер", "оупэн роутер", "опен рудэр",
+            "опен рудер", "опенрудер", "оупен рутер", "опэн раутер",
+            "опен сервер", "опенсервер", "опен сэр вер", "опэн сервер",
+            "оупен сервер", "апи сервер", "апин сервер", "опен сервэр",
+            "опен сивер", "опен север", "опенсервис", "опен сервис", 
+            "апин сэрвер", "опенсэвэр", "опенсевер", "агрегатор", "шлюз",
+            "нейро сеть", "нейросеть", "open", "опен"
         ]
     }
+    # ---------------------------------------------------
+    
     clean_text = user_text.strip(".,!? ")
+    clean_text_no_spaces = "".join(clean_text.split())
+
     for model_key, aliases in model_aliases.items():
-        if clean_text in aliases:
-            found_model_key = model_key
+        for alias in aliases:
+            alias_clean_no_spaces = "".join(alias.replace(" ", "").split())
+            if clean_text_no_spaces == alias_clean_no_spaces:
+                found_model_key = model_key
+                break
+        if found_model_key:
             break
 
     if found_model_key:
