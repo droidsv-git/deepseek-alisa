@@ -16,7 +16,7 @@ RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 CACHE = {}
 USER_MODELS = {}
 
-# Актуальные рабочие пути бесплатных моделей в OpenRouter
+# Актуальные рабочие идентификаторы моделей
 AVAILABLE_MODELS = {
     "джипити": {
         "aliases": ["джипити", "gpt", "гпт", "джи пи ти"],
@@ -27,13 +27,13 @@ AVAILABLE_MODELS = {
     "джемини": {
         "aliases": ["джемини", "gemini", "джемени"],
         "provider": "openrouter",
-        "path": "google/gemini-2.0-flash-lite-preview-02-05:free",
+        "path": "google/gemma-4-31b-it:free",
         "greeting": "Приветствую! Я модель Джемини, слушаю вас."
     },
     "дипсик": {
         "aliases": ["дипсик", "deepseek", "дипсиг", "дип сик"],
         "provider": "openrouter",
-        "path": "deepseek/deepseek-r1:free",
+        "path": "openrouter/free",
         "greeting": "Здравствуйте! Я модель Дипсик, задавайте ваш вопрос."
     }
 }
@@ -127,8 +127,8 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
             "1. Джипити — модель GPT-OSS 120B. "
-            "2. Джемини — модель Gemini Flash. "
-            "3. Дипсик — модель DeepSeek R1. "
+            "2. Джемини — модель Gemma 4. "
+            "3. Дипсик — модель DeepSeek. "
             "4. Вернуться к Алисе. "
             "Какую модель подключить?"
         )
