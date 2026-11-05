@@ -135,9 +135,8 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
 def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
-    
-    messages = [{"role": "system", "content": "Ты — Немотрон, языковая модель от NVIDIA. Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
-    
+    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+    # ИЗМЕНЕНО: Если история не передается (None), то этот блок не выполнится
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -151,7 +150,7 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
             "X-Title": "Alisa Skill"
         },
         json={
-            "model": "nvidia/nemotron-3-super-120b-a12b:free",
+            "model": "openrouter/free",
             "messages": messages
         },
         timeout=timeout_val
@@ -168,8 +167,9 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
-    if model_key == "немотрон":
-        return send_openrouter_request(user_text, timeout_val, history)
+    if model_key == "опенроутер":
+        # ИЗМЕНЕНО: Передаем None вместо history, чтобы отключить историю ТОЛЬКО для этой модели
+        return send_openrouter_request(user_text, timeout_val, None) 
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
@@ -177,8 +177,8 @@ def get_intro_prompt(model_key: str):
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
     if model_key == "джемини":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
-    if model_key == "немотрон":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Немотрон (Nemotron от NVIDIA)."
+    if model_key == "опенроутер":
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
@@ -213,7 +213,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS. Джемини — Gemini Flash. Немотрон — Nemotron от NVIDIA. "
+            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
@@ -226,32 +226,21 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
 
     found_model_key = None
+    # ИЗМЕНЕНО: ДОБАВЛЕНЫ ВАРИАНТЫ ПРОИЗНОШЕНИЯ ОПЕНРОУТЕРА
     model_aliases = {
-        # ДОБАВЛЕНЫ ВАРИАНТЫ, ГДЕ СТАНЦИЯ СЪЕДАЕТ ОКОНЧАНИЯ ДЖИПИТИ
-        "джипити": [
-            "джипити", "джипит", "джипи", "жипити", "жипит", "жипи", 
-            "gpt", "гпт", "джи пи ти", "джи пит", "джи пи"
-        ],
-        "джемини": ["джемини", "gemini", "джемени", "джеминай", "джемини"],
-        # ЗАМЕНА ОПЕНРОУТЕРА НА НЕМОТРОН
-        "немотрон": [
-            "немотрон", "немотро", "немотру", "nemotron", "немо трон", 
-            "немо", "немотрон от нвидиа", "нвидиа", "nvidia",
-            "опен роутер", "опенроутер", "openrouter", "роутер" # на всякий случай оставил старые
+        "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
+        "джемини": ["джемини", "gemini", "джемени"],
+        "опенроутер": [
+            "опен роутер", "опенроутер", "openrouter", "open router", 
+            "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
+            "опен рутер", "опенрутер", "опен раутер", "опенраутер",
+            "роутер", "апи роутер", "опен раутор"
         ]
     }
-    
     clean_text = user_text.strip(".,!? ")
-    clean_text = " ".join(clean_text.split())
-    clean_text_no_spaces = clean_text.replace(" ", "")
-
     for model_key, aliases in model_aliases.items():
-        for alias in aliases:
-            alias_clean = alias.strip(".,!? ")
-            if clean_text == alias_clean or clean_text_no_spaces == alias_clean.replace(" ", ""):
-                found_model_key = model_key
-                break
-        if found_model_key:
+        if clean_text in aliases:
+            found_model_key = model_key
             break
 
     if found_model_key:
