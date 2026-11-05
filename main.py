@@ -21,7 +21,6 @@ CACHE = {}
 USER_MODELS = {}
 
 async def self_ping():
-    """Каждые 10 минут пингует сам себя, чтобы Render не засыпал"""
     while True:
         await asyncio.sleep(600)
         try:
@@ -38,7 +37,6 @@ async def root():
     return {"status": "awake"}
 
 def split_text(text: str, size: int = 900):
-    """Твоя оригинальная функция нарезки текста"""
     if len(text) <= size:
         return [text]
     
@@ -63,7 +61,8 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int):
             "messages": [
                 {
                     "role": "system",
-                    "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления."
+                    # ДОБАВЛЕНО УКАЗАНИЕ ПО ДЛИНЕ
+                    "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко, максимум 3-4 предложения."
                 },
                 {"role": "user", "content": user_text}
             ]
@@ -82,12 +81,12 @@ def send_gemini_request(user_text: str, timeout_val: int):
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
-    # Добавлен адекватный лимит 1024 токена и системный промпт
     response = requests.post(
         url,
         json={
             "system_instruction": {
-                "parts": {"text": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления."}
+                # ДОБАВЛЕНО УКАЗАНИЕ ПО ДЛИНЕ
+                "parts": {"text": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко, максимум 3-4 предложения."}
             },
             "contents": [{"parts": [{"text": user_text}]}],
             "generationConfig": {
@@ -117,7 +116,8 @@ def send_github_request(user_text: str, timeout_val: int):
             "messages": [
                 {
                     "role": "system",
-                    "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления."
+                    # ДОБАВЛЕНО УКАЗАНИЕ ПО ДЛИНЕ
+                    "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко, максимум 3-4 предложения."
                 },
                 {"role": "user", "content": user_text}
             ]
@@ -150,7 +150,6 @@ def get_intro_prompt(model_key: str):
 
 def fetch_background(session_id: str, user_text: str, model_key: str):
     try:
-        # Таймаут 30 секунд для фоновой задачи
         answer = send_request_to_provider(model_key, user_text, timeout_val=30)
         chunks = split_text(answer, 900)
         CACHE[session_id] = chunks
@@ -229,7 +228,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 "response": {"end_session": False, "text": answer, "tts": answer}
             }
 
-    # 4. Твоя оригинальная обработка «дальше»
+    # 4. «дальше»
     if user_text in ["дальше", "дальше?"]:
         if session_id in CACHE and CACHE[session_id] != "PENDING":
             chunks = CACHE[session_id]
@@ -249,12 +248,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "response": {"end_session": False, "text": answer, "tts": answer}
         }
 
-    # 5. Твоя оригинальная обработка «готово»
+    # 5. «готово»
     if user_text in ["готово", "готово?"]:
         if session_id in CACHE:
             status = CACHE[session_id]
             if status == "PENDING":
-                # Изменил сообщение, чтобы ты понимал, что нужно просто подождать
                 answer = "Еще обрабатываю, подожди 3-4 секунды и снова скажи «Готово»."
             else:
                 chunks = status
