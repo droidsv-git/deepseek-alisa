@@ -14,6 +14,7 @@ RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 CACHE = {}
 USER_MODELS = {}
 
+# Актуальные рабочие идентификаторы нативных API
 AVAILABLE_MODELS = {
     "джипити": {
         "aliases": ["джипити", "gpt", "гпт", "джи пи ти"],
@@ -24,14 +25,14 @@ AVAILABLE_MODELS = {
     "джемини": {
         "aliases": ["джемини", "gemini", "джемени"],
         "provider": "gemini",
-        "path": "gemini-2.5-flash",
-        "greeting": "Приветствую! Я модель Джемини 2.5 Flash, слушаю вас."
+        "path": "gemini-1.5-flash",
+        "greeting": "Приветствую! Я модель Джемини, слушаю вас."
     },
     "дипсик": {
         "aliases": ["дипсик", "deepseek", "дипсиг", "дип сик"],
         "provider": "groq",
-        "path": "deepseek-r1-distill-llama-70b",
-        "greeting": "Здравствуйте! Я модель Дипсик R1, задавайте ваш вопрос."
+        "path": "deepseek-r1-distill-qwen-32b",
+        "greeting": "Здравствуйте! Я модель Дипсик, задавайте ваш вопрос."
     }
 }
 
@@ -123,7 +124,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
             "Джипити — GPT-OSS 120B. "
-            "Джемини — Gemini 2.5 Flash. "
+            "Джемини — Gemini Flash. "
             "Дипсик — DeepSeek R1. "
             "Вернуть Алису. "
             "Какую модель подключить?"
@@ -134,7 +135,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "response": {"end_session": False, "text": menu_text, "tts": menu_text}
         }
 
-    # Четкий и работающий пункт возврата к Алисе
     if user_text in ["вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию"]:
         if session_id in USER_MODELS:
             del USER_MODELS[session_id]
