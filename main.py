@@ -2,7 +2,7 @@ import os
 import asyncio
 import requests
 import time
-import psutil  # ТРЕБУЕТСЯ ДЛЯ КОМАНДЫ РЕСУРСОВ
+import psutil
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -69,7 +69,7 @@ def split_text(text: str, size: int = 900):
     return chunks
 
 def send_groq_request(model_path: str, user_text: str, timeout_val: int, history: list = None):
-    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде (например: я рада, я готова, я сделала)."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -106,7 +106,7 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             response = requests.post(
                 url,
                 json={
-                    "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
+                    "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде (например: я рада, я готова, я сделала)."}},
                     "contents": contents,
                     "generationConfig": {
                         "maxOutputTokens": max_tokens
@@ -129,14 +129,14 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
         except Exception as e:
             if str(e) != "503" or attempt == 2:
                 if str(e) == "503":
-                    raise Exception("а Google сейчас перегружены. Попробуйте чуть позже.")
+                    raise Exception("Сервера Google сейчас перегружены. Попробуйте чуть позже.")
                 raise e
             time.sleep(1 * (2 ** attempt))
 
 def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
-    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде (например: я рада, я готова, я сделала)."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -173,11 +173,11 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
 
 def get_intro_prompt(model_key: str):
     if model_key == "джипити":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B). Обязательно говори о себе в женском роде."
     if model_key == "джемини":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google). Обязательно говори о себе в женском роде."
     if model_key == "опенроутер":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter). Обязательно говори о себе в женском роде."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
@@ -186,7 +186,7 @@ def fetch_background(user_id: str, session_id: str, user_text: str, model_key: s
         update_history(user_id, "assistant", answer)
     except Exception as e:
         if "перегружены" in str(e):
-            CACHE[session_id] = ["а Google сейчас перегружены. Попробуйте чуть позже."]
+            CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуйте чуть позже."]
         else:
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
@@ -211,15 +211,24 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
     clean_cmd = user_text.strip(".,!? ")
-    if clean_cmd in ["ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп"]:
+    clean_cmd = " ".join(clean_cmd.split())
+    
+    resource_commands = [
+        "ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп",
+        "ресурсы сервер", "ресурс сервера", "ресурс сервер", "ресурсы кибер ноотроп",
+        "покажи ресурсы", "загрузка сервера", "нагрузка сервера", "состояние сервера",
+        "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон", 
+        "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
+        "ресурсы кибер", "кибер ресурсы"
+    ]
+    
+    if clean_cmd in resource_commands:
         try:
-            # Замер CPU (0.1 секунды)
             cpu_percent = psutil.cpu_percent(interval=0.1)
             mem = psutil.virtual_memory()
             total_ram_gb = round(mem.total / (1024**3), 1)
             used_ram_percent = mem.percent
             
-            # Замер сети за 0.2 секунды
             net1 = psutil.net_io_counters()
             time.sleep(0.2)
             net2 = psutil.net_io_counters()
@@ -227,7 +236,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 0.2) / 1024, 1)
             recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 0.2) / 1024, 1)
 
-            # Попытка узнать модель процессора в Linux
             cpu_model = "Неизвестный процессор"
             try:
                 with open("/proc/cpuinfo", "r") as f:
@@ -239,20 +247,20 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 pass
             
             text_answer = (
-                f"ресурсы вашего сервера кибер ноотроп. "
+                f"Сергей ресурсы сервера кибер ноотроп. "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
                 f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
             
             tts_answer = (
-                f"ресурсы вашего сервера кибер ноотроп. sil <[600]> "
+                f"Сергей ресурсы сервера кибер ноотроп. sil <[600]> "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
                 f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
         except Exception:
-            text_answer = "ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
+            text_answer = "Сергей ресурсы сервера кибер ноотроп. Не удалось получить данные о системе."
             tts_answer = text_answer
             
         return {"version": body["version"], "session": body["session"],
@@ -262,13 +270,13 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джи пи ти — GPT-OSS 120B. Джемини— Gemini Flash. Опен Роутер — OpenRouter Free. "
+            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": menu_text, "tts": menu_text}}
 
-    # --- ИЗМЕНЕННЫЙ БЛОК С ВАРИАНТАМИ "ВЕРНУТЬ АЛИСУ" ---
+    # --- ВАРИАНТЫ "ВЕРНУТЬ АЛИСУ" ---
     clean_cmd = user_text.strip(".,!? ")
     if clean_cmd in [
         "вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию",
@@ -284,6 +292,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # ---------------------------------------------------
 
     found_model_key = None
+    # --- ОБНОВЛЕННЫЙ СПИСОК ДЛЯ ОПЕНРОУТЕРА ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
@@ -291,13 +300,25 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "опен роутер", "опенроутер", "openrouter", "open router", 
             "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
             "опен рутер", "опенрутер", "опен раутер", "опенраутер",
-            "роутер", "апи роутер", "опен раутор"
+            "опен рутор", "опенрутор", "апи роутер", "апин роутер",
+            "опен раутор", "опенраутор", "опен раутэр", "роутер",
+            "опен рутэр", "опэн рутер", "оупэн роутер", "опен рудэр",
+            "опен рудер", "опенрудер", "оупен рутер", "опэн раутер"
         ]
     }
+    # ---------------------------------------------------
+    
     clean_text = user_text.strip(".,!? ")
+    clean_text = " ".join(clean_text.split())
+    clean_text_no_spaces = clean_text.replace(" ", "")
+
     for model_key, aliases in model_aliases.items():
-        if clean_text in aliases:
-            found_model_key = model_key
+        for alias in aliases:
+            alias_clean = alias.strip(".,!? ")
+            if clean_text == alias_clean or clean_text_no_spaces == alias_clean.replace(" ", ""):
+                found_model_key = model_key
+                break
+        if found_model_key:
             break
 
     if found_model_key:
