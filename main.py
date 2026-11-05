@@ -108,6 +108,7 @@ def send_gemini_request(user_text: str, timeout_val: int):
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
 
+    # Жесткое ограничение токенов, чтобы отвечала моментально
     response = requests.post(
         url,
         json={
@@ -117,7 +118,11 @@ def send_gemini_request(user_text: str, timeout_val: int):
                         {"text": user_text}
                     ]
                 }
-            ]
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 30,
+                "temperature": 0.7
+            }
         },
         timeout=timeout_val
     )
@@ -156,7 +161,8 @@ def send_github_request(user_text: str, timeout_val: int):
                     "role": "user",
                     "content": user_text
                 }
-            ]
+            ],
+            "max_tokens": 40
         },
         timeout=timeout_val
     )
@@ -201,26 +207,22 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
 
 
 def get_intro_prompt(model_key: str):
-    # ИСПРАВЛЕНО ТОЛЬКО ЗДЕСЬ: жесткое ограничение длины, чтобы не было обрезки
     if model_key == "джипити":
         return (
-            "Скажи ровно одну короткую фразу (максимум 15 слов). "
-            "Поздоровайся с Сергеем как старый друг и скажи, что ты Джипити (GPT-OSS 120B). "
-            "Никаких вопросов, без Markdown."
+            "Поздоровайся с Сергеем по имени, как старый друг. "
+            "Скажи что ты Джипити (GPT-OSS 120B). Только одно короткое предложение."
         )
 
     if model_key == "джемини":
         return (
-            "Скажи ровно одну короткую фразу (максимум 15 слов). "
-            "Поздоровайся с Сергеем как старый друг и скажи, что ты Джемини (Gemini Flash от Google). "
-            "Никаких вопросов, без Markdown."
+            "Поздоровайся с Сергеем по имени, как старый друг. "
+            "Скажи что ты Джемини (Gemini Flash от Google). Только одно короткое предложение."
         )
 
     if model_key == "дипсик":
         return (
-            "Скажи ровно одну короткую фразу (максимум 15 слов). "
-            "Поздоровайся с Сергеем как старый друг и скажи, что ты Дипсик (DeepSeek). "
-            "Никаких вопросов, без Markdown."
+            "Поздоровайся с Сергеем по имени, как старый друг. "
+            "Скажи что ты Дипсик (DeepSeek). Только одно короткое предложение."
         )
 
 
@@ -323,11 +325,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         intro_prompt = get_intro_prompt(found_model_key)
 
         try:
-            # Таймаут не изменён: 3.5 секунды.
+            # Таймаут изменен на 4.0 секунды
             greeting = send_request_to_provider(
                 found_model_key,
                 intro_prompt,
-                timeout_val=3.5
+                timeout_val=4.0
             )
 
             answer = (
@@ -452,11 +454,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         del CACHE[session_id]
 
     try:
-        # Ваш таймаут не изменён: 3.5 секунды
+        # Таймаут изменен на 4.0 секунды
         answer = send_request_to_provider(
             current_model_key,
             user_text,
-            timeout_val=3.5
+            timeout_val=4.0
         )
 
         if len(answer) > 900:
