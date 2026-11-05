@@ -2,6 +2,7 @@ import os
 import asyncio
 import requests
 import time
+import psutil  # ДОБАВЛЕНО ДЛЯ СБОРА СТАТИСТИКИ
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -90,8 +91,6 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
     max_tokens = 30 if is_greeting else 1024
-    
-    # Джемини передаются только последние 6 сообщений (3 вопроса и 3 ответа)
     trimmed_history = history[-6:] if history else []
     
     contents = []
@@ -133,13 +132,15 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 raise e
             time.sleep(1 * (2 ** attempt))
 
-def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
+def send_openrouter_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
+    trimmed_history = history[-6:] if history else []
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
-    if history:
-        messages.extend(history)
+    if trimmed_history:
+        messages.extend(trimmed_history)
     messages.append({"role": "user", "content": user_text})
+    max_tokens = 50 if is_greeting else 1024
     
     response = requests.post(
         OPENROUTER_API_URL,
@@ -151,7 +152,8 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
         },
         json={
             "model": "openrouter/free",
-            "messages": messages
+            "messages": messages,
+            "max_tokens": max_tokens
         },
         timeout=timeout_val
     )
@@ -168,7 +170,7 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
     if model_key == "опенроутер":
-        return send_openrouter_request(user_text, timeout_val, history)
+        return send_openrouter_request(user_text, timeout_val, is_greeting, history)
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
@@ -209,6 +211,38 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "")
 
+    # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
+    clean_cmd = user_text.strip(".,!? ")
+    if clean_cmd in ["ресурсы ноотропа", "ресурсы"]:
+        try:
+            # Замер CPU (0.1 секунды)
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            mem = psutil.virtual_memory()
+            mem_percent = mem.percent
+            
+            # Замер сети за 0.2 секунды
+            net1 = psutil.net_io_counters()
+            time.sleep(0.2)
+            net2 = psutil.net_io_counters()
+            
+            bytes_sent = net2.bytes_sent - net1.bytes_sent
+            bytes_recv = net2.bytes_recv - net1.bytes_recv
+            
+            sent_kbs = (bytes_sent / 0.2) / 1024
+            recv_kbs = (bytes_recv / 0.2) / 1024
+            
+            answer = (
+                f"Загрузка процессора {int(cpu_percent)} процентов. "
+                f"Свободной памяти {int(100 - mem_percent)} процентов. "
+                f"Сеть: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+            )
+        except Exception:
+            answer = "Не удалось получить данные о ресурсах сервера."
+            
+        return {"version": body["version"], "session": body["session"],
+                "response": {"end_session": False, "text": answer, "tts": answer}}
+    # ---------------------------------
+
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
@@ -225,8 +259,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
 
     found_model_key = None
-    
-    # --- ИЗМЕНЕННЫЙ БЛОК ПОИСКА МОДЕЛИ ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени", "джеминай"],
@@ -238,22 +270,18 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         ]
     }
     
-    # Очищаем текст от знаков препинания
     clean_text = user_text.strip(".,!? ")
-    # Убираем лишние пробелы
     clean_text = " ".join(clean_text.split())
     clean_text_no_spaces = clean_text.replace(" ", "")
 
     for model_key, aliases in model_aliases.items():
         for alias in aliases:
             alias_clean = alias.strip(".,!? ")
-            # Сравниваем как с пробелами, так и без них
             if clean_text == alias_clean or clean_text_no_spaces == alias_clean.replace(" ", ""):
                 found_model_key = model_key
                 break
         if found_model_key:
             break
-    # ------------------------------------
 
     if found_model_key:
         if current_model_key == found_model_key:
