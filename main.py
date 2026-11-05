@@ -67,7 +67,7 @@ def split_text(text: str, size: int = 900):
         text = text[split_idx:].lstrip()
     return chunks
 
-# --- ПРОГРЕВ МОДЕЛИ (без вывода результата) ---
+# --- ПРОГРЕВ МОДЕЛИ (БЕЗ ВЫВОДА РЕЗУЛЬТАТА) ---
 
 def warmup_groq():
     try:
@@ -130,26 +130,32 @@ def warmup_model(model_key: str):
     elif model_key == "дипсик":
         warmup_github()
 
-# --- ОТПРАВКА ЗАПРОСОВ (С ПОВТОРАМИ) ---
+# --- ОТПРАВКА ЗАПРОСОВ С ПОВТОРАМИ (WEBHOOK) ---
 
 def send_groq_request(model_path: str, user_text: str, timeout_val: int, history: list = None):
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
-    response = requests.post(
-        GROQ_API_URL,
-        headers={"Authorization": f"Bearer {GPT_API_KEY}"},
-        json={"model": model_path, "messages": messages},
-        timeout=timeout_val
-    )
-    data = response.json()
-    if "choices" not in data:
-        raise Exception("Ошибка Groq.")
-    message = data["choices"][0]["message"]
-    return (message.get("content") or message.get("reasoning") or "").strip()
+    
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                GROQ_API_URL,
+                headers={"Authorization": f"Bearer {GPT_API_KEY}"},
+                json={"model": model_path, "messages": messages},
+                timeout=timeout_val
+            )
+            data = response.json()
+            if "choices" not in data:
+                raise Exception("Ошибка Groq.")
+            message = data["choices"][0]["message"]
+            return (message.get("content") or message.get("reasoning") or "").strip()
+        except requests.exceptions.RequestException:
+            if attempt == 2:
+                raise Exception("Webhook timeout")
 
-def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None, retry_count: int = 3):
+def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
@@ -161,8 +167,7 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_text}]})
 
-    last_error = None
-    for attempt in range(retry_count):
+    for attempt in range(3):
         try:
             response = requests.post(
                 url,
@@ -185,13 +190,19 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 return data["candidates"][0]["content"]["parts"][0]["text"].strip()
             except Exception:
                 raise Exception("Не удалось получить ответ от Google.")
+        except requests.exceptions.RequestException:
+            # Если это таймаут (Webhook)
+            if attempt == 2:
+                raise Exception("Webhook timeout")
+            time.sleep(0.1) # небольшая пауза перед повтором
         except Exception as e:
-            last_error = e
-            if str(e) == "503" or "timeout" in str(e).lower() or "timed out" in str(e).lower():
-                if attempt < retry_count - 1:
-                    time.sleep(1 * (2 ** attempt))
-                    continue
-            raise last_error
+            # Обработка 503 с задержкой
+            if str(e) == "503":
+                if attempt == 2:
+                    raise Exception("Сервера Google сейчас перегружены. Попробуйте чуть позже.")
+                time.sleep(1 * (2 ** attempt))
+                continue
+            raise e
 
 def send_github_request(user_text: str, timeout_val: int, history: list = None):
     if not GITHUB_API_KEY:
@@ -200,21 +211,27 @@ def send_github_request(user_text: str, timeout_val: int, history: list = None):
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
-    response = requests.post(
-        GITHUB_API_URL,
-        headers={
-            "Authorization": f"Bearer {GITHUB_API_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "application/vnd.github+json"
-        },
-        json={"model": "deepseek/DeepSeek-R1", "messages": messages},
-        timeout=timeout_val
-    )
-    data = response.json()
-    if "choices" not in data:
-        raise Exception("Ошибка GitHub.")
-    message = data["choices"][0]["message"]
-    return (message.get("content") or message.get("reasoning_content") or "").strip()
+    
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                GITHUB_API_URL,
+                headers={
+                    "Authorization": f"Bearer {GITHUB_API_KEY}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/vnd.github+json"
+                },
+                json={"model": "deepseek/DeepSeek-R1", "messages": messages},
+                timeout=timeout_val
+            )
+            data = response.json()
+            if "choices" not in data:
+                raise Exception("Ошибка GitHub.")
+            message = data["choices"][0]["message"]
+            return (message.get("content") or message.get("reasoning_content") or "").strip()
+        except requests.exceptions.RequestException:
+            if attempt == 2:
+                raise Exception("Webhook timeout")
 
 def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 30, is_greeting: bool = False, user_id: str = None):
     history = get_history(user_id) if user_id else []
@@ -308,7 +325,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         if session_id in CACHE: del CACHE[session_id]
         if user_id in HISTORY: del HISTORY[user_id]
 
-        # ПРОГРЕВ МОДЕЛИ (без вывода результата)
+        # --- ПРОГРЕВ МОДЕЛИ ---
         warmup_model(found_model_key)
 
         intro_prompt = get_intro_prompt(found_model_key)
