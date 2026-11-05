@@ -2,7 +2,7 @@ import os
 import asyncio
 import requests
 import time
-import psutil  # ДОБАВЛЕНО ДЛЯ КОМАНДЫ РЕСУРСОВ
+import psutil  # ДЛЯ КОМАНДЫ РЕСУРСОВ
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -221,7 +221,10 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
         "ресурсы кибер", "кибер ресурсы", "ресурсы сервера нооттроп", "ресурсы сервер ноотроп",
         "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп",
-        "мониторинг сервера", "мониторинг", "нагрузка", "ресурсы"
+        "мониторинг сервера", "мониторинг", "нагрузка", "ресурсы",
+        # ДОБАВЛЕНЫ ВАРИАНТЫ ИЗ-ЗА ПЛОХОГО РАСПОЗНАВАНИЯ
+        "ресурсы ноутбук", "ресурсы ноутбука", "система", "сервер", "состояние системы",
+        "загрузка системы", "показатели сервера", "сервер ноотроп", "ноутроп"
     ]
     resource_commands_no_spaces = [cmd.replace(" ", "") for cmd in resource_commands]
     
@@ -232,12 +235,17 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             total_ram_gb = round(mem.total / (1024**3), 1)
             used_ram_percent = mem.percent
             
+            # Замер сети за 1 секунду (чтобы точно поймать трафик)
             net1 = psutil.net_io_counters()
-            time.sleep(0.2)
+            time.sleep(1.0) 
             net2 = psutil.net_io_counters()
             
-            sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 0.2) / 1024, 1)
-            recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 0.2) / 1024, 1)
+            sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 1.0) / 1024, 1)
+            recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 1.0) / 1024, 1)
+            
+            # Общий трафик за всё время работы
+            total_sent_mb = round(net2.bytes_sent / (1024**2), 1)
+            total_recv_mb = round(net2.bytes_recv / (1024**2), 1)
 
             cpu_model = "Неизвестный процессор"
             try:
@@ -253,14 +261,16 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 f"Ресурсы вашего сервера кибер ноотроп. "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
-                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+                f"Текущий трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду. "
+                f"Всего передано {total_sent_mb} мегабайт, получено {total_recv_mb} мегабайт."
             )
             
             tts_answer = (
                 f"Ресурсы вашего сервера кибер ноотроп. sil <[600]> "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
-                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+                f"Текущий трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду. "
+                f"Всего передано {total_sent_mb} мегабайт, получено {total_recv_mb} мегабайт."
             )
         except Exception:
             text_answer = "Ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
