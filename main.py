@@ -12,7 +12,6 @@ GPT_API_KEY = os.getenv("GPT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
-# Заменили GitHub Models на OpenRouter
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -92,15 +91,13 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
     )
     max_tokens = 30 if is_greeting else 1024
     
-    # --- ИЗМЕНЕНИЕ 1: ОГРАНИЧЕНИЕ ИСТОРИИ ДЛЯ ДЖЕМИНИ ---
-    # Берем только последние 6 сообщений (3 пары вопрос-ответ)
+    # Джемини передаются только последние 6 сообщений (3 вопроса и 3 ответа)
     trimmed_history = history[-6:] if history else []
     
     contents = []
     if trimmed_history:
         for msg in trimmed_history:
             contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
-    # --------------------------------------------------
     
     contents.append({"role": "user", "parts": [{"text": user_text}]})
 
@@ -112,10 +109,8 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                     "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
                     "contents": contents,
                     "generationConfig": {
-                        "maxOutputTokens": max_tokens,
-                        # --- ИЗМЕНЕНИЕ 2: ОТКЛЮЧАЕМ ГЛУБОКОЕ МЫШЛЕНИЕ ---
-                        "thinking_level": "LOW"
-                        # ---------------------------------------------
+                        "maxOutputTokens": max_tokens
+                        # СТРОКА thinking_level ПОЛНОСТЬЮ УДАЛЕНА
                     }
                 },
                 timeout=timeout_val
@@ -156,7 +151,7 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
             "X-Title": "Alisa Skill"
         },
         json={
-            "model": "openrouter/free",  # Роутер сам выбирает доступную бесплатную модель
+            "model": "openrouter/free",
             "messages": messages
         },
         timeout=timeout_val
@@ -208,6 +203,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     session_id = body["session"]["session_id"]
     user_id = body["session"]["user"]["user_id"]
     is_new_session = body.get("session", {}).get("new", False)
+
+    # Сброс при новой сессии, чтобы не было "дефолтной" модели
+    if is_new_session:
+        USER_MODELS.pop(user_id, None)
+        HISTORY.pop(user_id, None)
 
     current_model_key = USER_MODELS.get(user_id, "")
 
