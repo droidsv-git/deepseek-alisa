@@ -82,7 +82,7 @@ def send_gemini_request(user_text: str, timeout_val: int):
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
-    # Без ограничений токенов
+    # УБРАНО ЛЮБОЕ ОГРАНИЧЕНИЕ ТОКЕНОВ. Теперь Джемини может писать сколько угодно.
     response = requests.post(
         url,
         json={"contents": [{"parts": [{"text": user_text}]}]},
@@ -113,7 +113,7 @@ def send_github_request(user_text: str, timeout_val: int):
                 },
                 {"role": "user", "content": user_text}
             ]
-            # Убрано "max_tokens": 40, чтобы не обрубало текст
+            # УБРАНО ЛЮБОЕ ОГРАНИЧЕНИЕ ТОКЕНОВ
         },
         timeout=timeout_val
     )
@@ -134,12 +134,13 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
+    # Промпты оставляем короткими, чтобы модель успевала подумать, но теперь она не обрубается
     if model_key == "джипити":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B). Только одно короткое предложение."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
     if model_key == "джемини":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google). Только одно короткое предложение."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
     if model_key == "дипсик":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Дипсик (DeepSeek). Только одно короткое предложение."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Дипсик (DeepSeek)."
 
 def fetch_background(session_id: str, user_text: str, model_key: str):
     try:
@@ -205,8 +206,8 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
         intro_prompt = get_intro_prompt(found_model_key)
         try:
-            # Таймаут 4.0 секунды для приветствия
-            greeting = send_request_to_provider(found_model_key, intro_prompt, timeout_val=4.0)
+            # Таймаут 4.5 секунды для приветствия
+            greeting = send_request_to_provider(found_model_key, intro_prompt, timeout_val=4.5)
             answer = f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису»."
             return {
                 "version": body["version"], "session": body["session"],
@@ -271,7 +272,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         del CACHE[session_id]
 
     try:
-        # Таймаут 4.0 секунды
+        # Таймаут 4.0 секунды для обычных вопросов
         answer = send_request_to_provider(current_model_key, user_text, timeout_val=4.0)
 
         if len(answer) > 900:
