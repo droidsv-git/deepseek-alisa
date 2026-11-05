@@ -209,9 +209,9 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "")
 
-    # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
+    # --- ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА РЕСУРСОВ ---
     clean_cmd = user_text.strip(".,!? ")
-    clean_cmd = " ".join(clean_cmd.split())
+    clean_cmd_no_spaces = "".join(clean_cmd.split()) # Полностью удаляем все пробелы
     
     resource_commands = [
         "ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп",
@@ -219,10 +219,13 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         "покажи ресурсы", "загрузка сервера", "нагрузка сервера", "состояние сервера",
         "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон", 
         "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
-        "ресурсы кибер", "кибер ресурсы"
+        "ресурсы кибер", "кибер ресурсы", "ресурсы сервера нооттроп", "ресурсы сервер ноотроп",
+        "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп"
     ]
+    # Удаляем пробелы и из команд тоже
+    resource_commands_no_spaces = [cmd.replace(" ", "") for cmd in resource_commands]
     
-    if clean_cmd in resource_commands:
+    if clean_cmd_no_spaces in resource_commands_no_spaces:
         try:
             cpu_percent = psutil.cpu_percent(interval=0.1)
             mem = psutil.virtual_memory()
@@ -246,21 +249,22 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             except Exception:
                 pass
             
+            # ИЗМЕНЕН ТЕКСТ НА "РЕСУРСЫ ВАШЕГО СЕРВЕРА КИБЕР НООТРОП"
             text_answer = (
-                f"Сергей ресурсы сервера кибер ноотроп. "
+                f"Ресурсы вашего сервера кибер ноотроп. "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
                 f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
             
             tts_answer = (
-                f"Сергей ресурсы сервера кибер ноотроп. sil <[600]> "
+                f"Ресурсы вашего сервера кибер ноотроп. sil <[600]> "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
                 f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
         except Exception:
-            text_answer = "Сергей ресурсы сервера кибер ноотроп. Не удалось получить данные о системе."
+            text_answer = "Ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
             tts_answer = text_answer
             
         return {"version": body["version"], "session": body["session"],
@@ -292,7 +296,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # ---------------------------------------------------
 
     found_model_key = None
-    # --- ОБНОВЛЕННЫЙ СПИСОК ДЛЯ ОПЕНРОУТЕРА ---
+    # --- ОБНОВЛЕННЫЙ СПИСОК ДЛЯ ОПЕНРОУТЕРА (ДОБАВЛЕН "ОПЕН СЕРВЕР") ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
@@ -303,19 +307,21 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "опен рутор", "опенрутор", "апи роутер", "апин роутер",
             "опен раутор", "опенраутор", "опен раутэр", "роутер",
             "опен рутэр", "опэн рутер", "оупэн роутер", "опен рудэр",
-            "опен рудер", "опенрудер", "оупен рутер", "опэн раутер"
+            "опен рудер", "опенрудер", "оупен рутер", "опэн раутер",
+            # НОВЫЕ ВАРИАНТЫ ИЗ-ЗА ПЛОХОГО РАСПОЗНАВАНИЯ:
+            "опен сервер", "опенсервер", "опен сэр вер", "опэн сервер",
+            "оупен сервер", "апи сервер", "апин сервер", "опен сервэр"
         ]
     }
     # ---------------------------------------------------
     
     clean_text = user_text.strip(".,!? ")
-    clean_text = " ".join(clean_text.split())
-    clean_text_no_spaces = clean_text.replace(" ", "")
+    clean_text_no_spaces = "".join(clean_text.split())
 
     for model_key, aliases in model_aliases.items():
         for alias in aliases:
-            alias_clean = alias.strip(".,!? ")
-            if clean_text == alias_clean or clean_text_no_spaces == alias_clean.replace(" ", ""):
+            alias_clean_no_spaces = "".join(alias.replace(" ", "").split())
+            if clean_text_no_spaces == alias_clean_no_spaces:
                 found_model_key = model_key
                 break
         if found_model_key:
