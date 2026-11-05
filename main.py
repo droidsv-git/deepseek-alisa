@@ -13,8 +13,11 @@ GPT_API_KEY = os.getenv("GPT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Ключ OpenRouter используется для доступа к Nemotron
+NEMOTRON_API_KEY = os.getenv("OPENROUTER_API_KEY")
+NEMOTRON_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Бесплатная модель Nemotron 3 Ultra от NVIDIA
+NEMOTRON_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
@@ -106,7 +109,6 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             response = requests.post(
                 url,
                 json={
-                    # УБРАН ЖЕНСКИЙ РОД ДЛЯ ДЖЕМИНИ
                     "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
                     "contents": contents,
                     "generationConfig": {
@@ -134,32 +136,36 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 raise e
             time.sleep(1 * (2 ** attempt))
 
-def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
-    if not OPENROUTER_API_KEY:
-        raise Exception("Не задан OPENROUTER_API_KEY.")
-    # УБРАН ЖЕНСКИЙ РОД ДЛЯ ОПЕНРОУТЕРА
-    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+def send_nemotron_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
+    if not NEMOTRON_API_KEY:
+        raise Exception("Не задан OPENROUTER_API_KEY для Nemotron.")
+    
+    messages = [{"role": "system", "content": "Ты — Немотрон (Nemotron) от NVIDIA. Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
     
+    # Ограничиваем длину ответа для приветствия, чтобы не тормозило
+    max_tokens = 60 if is_greeting else 1024
+    
     response = requests.post(
-        OPENROUTER_API_URL,
+        NEMOTRON_API_URL,
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {NEMOTRON_API_KEY}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://deepseek-alisa-fusq.onrender.com",
             "X-Title": "Alisa Skill"
         },
         json={
-            "model": "openrouter/free",
-            "messages": messages
+            "model": NEMOTRON_MODEL,
+            "messages": messages,
+            "max_tokens": max_tokens
         },
         timeout=timeout_val
     )
     data = response.json()
     if "choices" not in data:
-        raise Exception(f"Ошибка OpenRouter: {data}")
+        raise Exception(f"Ошибка Nemotron: {data}")
     message = data["choices"][0]["message"]
     return (message.get("content") or message.get("reasoning_content") or "").strip()
 
@@ -169,28 +175,27 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
-    if model_key == "опенроутер":
-        return send_openrouter_request(user_text, timeout_val, None) 
+    if model_key == "немотрон":
+        # Для Nemotron историю пока не передаем, чтобы избежать таймаутов
+        return send_nemotron_request(user_text, timeout_val, is_greeting, None)
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
     if model_key == "джипити":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B). Обязательно говори о себе в женском роде."
     if model_key == "джемини":
-        # УБРАН ЖЕНСКИЙ РОД ИЗ ПРИВЕТСТВИЯ
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
-    if model_key == "опенроутер":
-        # УБРАН ЖЕНСКИЙ РОД ИЗ ПРИВЕТСТВИЯ
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
+    if model_key == "немотрон":
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Немотрон (Nemotron от NVIDIA). Обязательно говори о себе в женском роде."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
-        answer = send_request_to_provider(model_key, user_text, timeout_val=30, user_id=user_id)
+        answer = send_request_to_provider(model_key, user_text, timeout_val=40, user_id=user_id)
         CACHE[session_id] = split_text(answer, 900)
         update_history(user_id, "assistant", answer)
     except Exception as e:
         if "перегружены" in str(e):
-            CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуйте чуть позже."]
+            CACHE[session_id] = ["Сервера сейчас перегружены. Попробуйте чуть позже."]
         else:
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
@@ -213,7 +218,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "")
 
-    # --- ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА РЕСУРСОВ ---
+    # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
     clean_cmd = user_text.strip(".,!? ")
     clean_cmd_no_spaces = "".join(clean_cmd.split())
     
@@ -277,7 +282,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
+            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Немотрон — Nemotron от NVIDIA. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
@@ -299,23 +304,13 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # ---------------------------------------------------
 
     found_model_key = None
-    # --- ОБНОВЛЕННЫЙ СПИСОК ДЛЯ ОПЕНРОУТЕРА ---
+    # --- СПИСОК ДЛЯ НЕМОТРОНА ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
-        "опенроутер": [
-            "опен роутер", "опенроутер", "openrouter", "open router", 
-            "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
-            "опен рутер", "опенрутер", "опен раутер", "опенраутер",
-            "опен рутор", "опенрутор", "апи роутер", "апин роутер",
-            "опен раутор", "опенраутор", "опен раутэр", "роутер",
-            "опен рутэр", "опэн рутер", "оупэн роутер", "опен рудэр",
-            "опен рудер", "опенрудер", "оупен рутер", "опэн раутер",
-            "опен сервер", "опенсервер", "опен сэр вер", "опэн сервер",
-            "оупен сервер", "апи сервер", "апин сервер", "опен сервэр",
-            "опен сивер", "опен север", "опенсервис", "опен сервис", 
-            "апин сэрвер", "опенсэвэр", "опенсевер", "агрегатор", "шлюз",
-            "нейро сеть", "нейросеть", "open", "опен"
+        "немотрон": [
+            "немотрон", "nemotron", "немо трон", "немотрон от нвидиа",
+            "нвидиа", "nvidia", "немотрон нвидиа", "немотрон nvidia"
         ]
     }
     # ---------------------------------------------------
