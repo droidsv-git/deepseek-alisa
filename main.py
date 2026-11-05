@@ -106,7 +106,8 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             response = requests.post(
                 url,
                 json={
-                    "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде (например: я рада, я готова, я сделала)."}},
+                    # УБРАН ЖЕНСКИЙ РОД ДЛЯ ДЖЕМИНИ
+                    "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
                     "contents": contents,
                     "generationConfig": {
                         "maxOutputTokens": max_tokens
@@ -136,7 +137,8 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
 def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
-    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде (например: я рада, я готова, я сделала)."}]
+    # УБРАН ЖЕНСКИЙ РОД ДЛЯ ОПЕНРОУТЕРА
+    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -175,9 +177,11 @@ def get_intro_prompt(model_key: str):
     if model_key == "джипити":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B). Обязательно говори о себе в женском роде."
     if model_key == "джемини":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google). Обязательно говори о себе в женском роде."
+        # УБРАН ЖЕНСКИЙ РОД ИЗ ПРИВЕТСТВИЯ
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
     if model_key == "опенроутер":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter). Обязательно говори о себе в женском роде."
+        # УБРАН ЖЕНСКИЙ РОД ИЗ ПРИВЕТСТВИЯ
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
@@ -211,7 +215,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     # --- ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА РЕСУРСОВ ---
     clean_cmd = user_text.strip(".,!? ")
-    clean_cmd_no_spaces = "".join(clean_cmd.split()) # Полностью удаляем все пробелы
+    clean_cmd_no_spaces = "".join(clean_cmd.split())
     
     resource_commands = [
         "ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп",
@@ -220,9 +224,9 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон", 
         "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
         "ресурсы кибер", "кибер ресурсы", "ресурсы сервера нооттроп", "ресурсы сервер ноотроп",
-        "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп"
+        "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп",
+        "мониторинг сервера", "мониторинг", "нагрузка", "ресурсы"
     ]
-    # Удаляем пробелы и из команд тоже
     resource_commands_no_spaces = [cmd.replace(" ", "") for cmd in resource_commands]
     
     if clean_cmd_no_spaces in resource_commands_no_spaces:
@@ -249,7 +253,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             except Exception:
                 pass
             
-            # ИЗМЕНЕН ТЕКСТ НА "РЕСУРСЫ ВАШЕГО СЕРВЕРА КИБЕР НООТРОП"
             text_answer = (
                 f"Ресурсы вашего сервера кибер ноотроп. "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
@@ -296,7 +299,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # ---------------------------------------------------
 
     found_model_key = None
-    # --- ОБНОВЛЕННЫЙ СПИСОК ДЛЯ ОПЕНРОУТЕРА (ДОБАВЛЕН "ОПЕН СЕРВЕР") ---
+    # --- ОБНОВЛЕННЫЙ СПИСОК ДЛЯ ОПЕНРОУТЕРА ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
@@ -308,9 +311,11 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "опен раутор", "опенраутор", "опен раутэр", "роутер",
             "опен рутэр", "опэн рутер", "оупэн роутер", "опен рудэр",
             "опен рудер", "опенрудер", "оупен рутер", "опэн раутер",
-            # НОВЫЕ ВАРИАНТЫ ИЗ-ЗА ПЛОХОГО РАСПОЗНАВАНИЯ:
             "опен сервер", "опенсервер", "опен сэр вер", "опэн сервер",
-            "оупен сервер", "апи сервер", "апин сервер", "опен сервэр"
+            "оупен сервер", "апи сервер", "апин сервер", "опен сервэр",
+            "опен сивер", "опен север", "опенсервис", "опен сервис", 
+            "апин сэрвер", "опенсэвэр", "опенсевер", "агрегатор", "шлюз",
+            "нейро сеть", "нейросеть", "open", "опен"
         ]
     }
     # ---------------------------------------------------
