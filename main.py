@@ -61,7 +61,6 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int):
             "messages": [
                 {
                     "role": "system",
-                    # ДОБАВЛЕНО УКАЗАНИЕ ПО ДЛИНЕ
                     "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко, максимум 3-4 предложения."
                 },
                 {"role": "user", "content": user_text}
@@ -76,21 +75,24 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int):
     answer = message.get("content") or message.get("reasoning") or message.get("reasoning_content") or ""
     return answer.strip()
 
-def send_gemini_request(user_text: str, timeout_val: int):
+def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False):
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
+    
+    # Умный лимит: 30 токенов для приветствия, 1024 для обычных вопросов
+    max_tokens = 30 if is_greeting else 1024
+    
     response = requests.post(
         url,
         json={
             "system_instruction": {
-                # ДОБАВЛЕНО УКАЗАНИЕ ПО ДЛИНЕ
-                "parts": {"text": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко, максимум 3-4 предложения."}
+                "parts": {"text": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко."}
             },
             "contents": [{"parts": [{"text": user_text}]}],
             "generationConfig": {
-                "maxOutputTokens": 1024
+                "maxOutputTokens": max_tokens
             }
         },
         timeout=timeout_val
@@ -116,7 +118,6 @@ def send_github_request(user_text: str, timeout_val: int):
             "messages": [
                 {
                     "role": "system",
-                    # ДОБАВЛЕНО УКАЗАНИЕ ПО ДЛИНЕ
                     "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления. Отвечай кратко, максимум 3-4 предложения."
                 },
                 {"role": "user", "content": user_text}
@@ -131,11 +132,11 @@ def send_github_request(user_text: str, timeout_val: int):
     answer = message.get("content") or message.get("reasoning_content") or ""
     return answer.strip()
 
-def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 30):
+def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 30, is_greeting: bool = False):
     if model_key == "джипити":
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val)
     if model_key == "джемини":
-        return send_gemini_request(user_text, timeout_val)
+        return send_gemini_request(user_text, timeout_val, is_greeting)
     if model_key == "дипсик":
         return send_github_request(user_text, timeout_val)
     raise Exception("Неизвестная модель.")
@@ -150,7 +151,7 @@ def get_intro_prompt(model_key: str):
 
 def fetch_background(session_id: str, user_text: str, model_key: str):
     try:
-        answer = send_request_to_provider(model_key, user_text, timeout_val=30)
+        answer = send_request_to_provider(model_key, user_text, timeout_val=30, is_greeting=False)
         chunks = split_text(answer, 900)
         CACHE[session_id] = chunks
     except Exception as e:
@@ -212,8 +213,8 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
         intro_prompt = get_intro_prompt(found_model_key)
         try:
-            # Таймаут 4.5 секунды для приветствия
-            greeting = send_request_to_provider(found_model_key, intro_prompt, timeout_val=4.5)
+            # Таймаут 4.0 секунды (чтобы Алиса не обрывала) + is_greeting=True
+            greeting = send_request_to_provider(found_model_key, intro_prompt, timeout_val=4.0, is_greeting=True)
             answer = f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису»."
             return {
                 "version": body["version"], "session": body["session"],
@@ -279,7 +280,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     try:
         # Таймаут 4.0 секунды для обычных вопросов
-        answer = send_request_to_provider(current_model_key, user_text, timeout_val=4.0)
+        answer = send_request_to_provider(current_model_key, user_text, timeout_val=4.0, is_greeting=False)
 
         if len(answer) > 900:
             chunks = split_text(answer, 900)
