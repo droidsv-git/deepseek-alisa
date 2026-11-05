@@ -12,9 +12,9 @@ GPT_API_KEY = os.getenv("GPT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
-# ИСПРАВЛЕН ПРАВИЛЬНЫЙ URL ДЛЯ GITHUB MODELS
-GITHUB_API_KEY = os.getenv("GITHUB_API_KEY")
-GITHUB_API_URL = "https://models.inference.ai.azure.com/chat/completions"
+# Заменили GitHub Models на OpenRouter
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
@@ -127,29 +127,31 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 raise e
             time.sleep(1 * (2 ** attempt))
 
-def send_github_request(user_text: str, timeout_val: int, history: list = None):
-    if not GITHUB_API_KEY:
-        raise Exception("Не задан GITHUB_API_KEY.")
+def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
+    if not OPENROUTER_API_KEY:
+        raise Exception("Не задан OPENROUTER_API_KEY.")
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
     
     response = requests.post(
-        GITHUB_API_URL,
+        OPENROUTER_API_URL,
         headers={
-            "Authorization": f"Bearer {GITHUB_API_KEY}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://deepseek-alisa-fusq.onrender.com", # Рекомендуется OpenRouter
+            "X-Title": "Alisa Skill" # Рекомендуется OpenRouter
         },
         json={
-            "model": "DeepSeek-R1",  # ИСПРАВЛЕНО ПРАВИЛЬНОЕ НАЗВАНИЕ МОДЕЛИ
+            "model": "deepseek/deepseek-r1:free",  # Бесплатная модель DeepSeek на OpenRouter
             "messages": messages
         },
         timeout=timeout_val
     )
     data = response.json()
     if "choices" not in data:
-        raise Exception("Ошибка GitHub.")
+        raise Exception(f"Ошибка OpenRouter: {data}")
     message = data["choices"][0]["message"]
     return (message.get("content") or message.get("reasoning_content") or "").strip()
 
@@ -160,7 +162,7 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
     if model_key == "дипсик":
-        return send_github_request(user_text, timeout_val, history)
+        return send_openrouter_request(user_text, timeout_val, history)
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
