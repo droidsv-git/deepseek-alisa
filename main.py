@@ -7,16 +7,13 @@ app = FastAPI()
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GPT_API_KEY = os.getenv("GPT_API_KEY")
-
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
 CACHE = {}
 USER_MODELS = {}
 
-# Актуальные рабочие идентификаторы моделей
 AVAILABLE_MODELS = {
     "джипити": {
         "aliases": ["джипити", "gpt", "гпт", "джи пи ти"],
@@ -26,15 +23,15 @@ AVAILABLE_MODELS = {
     },
     "джемини": {
         "aliases": ["джемини", "gemini", "джемени"],
-        "provider": "openrouter",
-        "path": "google/gemma-4-31b-it:free",
-        "greeting": "Приветствую! Я модель Джемини, слушаю вас."
+        "provider": "gemini",
+        "path": "gemini-2.5-flash",
+        "greeting": "Приветствую! Я модель Джемини 2.5 Flash, слушаю вас."
     },
     "дипсик": {
         "aliases": ["дипсик", "deepseek", "дипсиг", "дип сик"],
-        "provider": "openrouter",
-        "path": "openrouter/free",
-        "greeting": "Здравствуйте! Я модель Дипсик, задавайте ваш вопрос."
+        "provider": "groq",
+        "path": "deepseek-r1-distill-llama-70b",
+        "greeting": "Здравствуйте! Я модель Дипсик R1, задавайте ваш вопрос."
     }
 }
 
@@ -84,34 +81,33 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
             },
             timeout=timeout_val
         )
-    else:
+        data = response.json()
+        if "choices" not in data:
+            raise Exception(f"Groq API Error: {data}")
+        return data["choices"][0]["message"]["content"]
+
+    elif provider == "gemini":
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_path}:generateContent?key={GEMINI_API_KEY}"
         response = requests.post(
-            OPENROUTER_API_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "HTTP-Referer": RENDER_URL,
-                "X-Title": "Cyber Nootrop Alice"
-            },
+            gemini_url,
             json={
-                "model": model_path,
-                "messages": [{"role": "user", "content": user_text}],
+                "contents": [{"parts": [{"text": user_text}]}]
             },
             timeout=timeout_val
         )
-    
-    data = response.json()
-    if "choices" not in data:
-        raise Exception(f"API Error: {data}")
-    return data
+        data = response.json()
+        try:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            raise Exception(f"Gemini API Error: {data}")
 
 def fetch_background(session_id: str, user_text: str, model_key: str):
     try:
-        data = send_request_to_provider(model_key, user_text, timeout_val=45)
-        answer = data["choices"][0]["message"]["content"]
+        answer = send_request_to_provider(model_key, user_text, timeout_val=45)
         chunks = split_text(answer, 900)
         CACHE[session_id] = chunks
     except Exception as e:
-        CACHE[session_id] = [f"Ошибка генерации: {e}"]
+        CACHE[session_id] = [f"Ошибка генерации: {str(e)[:150]}"]
 
 @app.post("/")
 async def main(request: Request, background_tasks: BackgroundTasks):
@@ -126,10 +122,10 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "1. Джипити — модель GPT-OSS 120B. "
-            "2. Джемини — модель Gemma 4. "
-            "3. Дипсик — модель DeepSeek. "
-            "4. Вернуться к Алисе. "
+            "Джипити — GPT-OSS 120B. "
+            "Джемини — Gemini 2.5 Flash. "
+            "Дипсик — DeepSeek R1. "
+            "Вернуть Алису. "
             "Какую модель подключить?"
         )
         return {
@@ -138,7 +134,8 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "response": {"end_session": False, "text": menu_text, "tts": menu_text}
         }
 
-    if user_text in ["сбросить модель", "отключить модель", "по умолчанию", "вернуться к алисе"]:
+    # Четкий и работающий пункт возврата к Алисе
+    if user_text in ["вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию"]:
         if session_id in USER_MODELS:
             del USER_MODELS[session_id]
         answer = "Возврат к стандартной Алисе."
@@ -160,7 +157,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if found_model_key:
         USER_MODELS[session_id] = found_model_key
         model_greeting = AVAILABLE_MODELS[found_model_key]["greeting"]
-        answer = f"Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуться к алисе». {model_greeting}"
+        answer = f"Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису». {model_greeting}"
         return {
             "version": body["version"],
             "session": body["session"],
@@ -217,8 +214,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         del CACHE[session_id]
 
     try:
-        data = send_request_to_provider(current_model_key, user_text, timeout_val=3.5)
-        answer = data["choices"][0]["message"]["content"]
+        answer = send_request_to_provider(current_model_key, user_text, timeout_val=3.5)
 
         if len(answer) > 900:
             chunks = split_text(answer, 900)
