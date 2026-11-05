@@ -2,6 +2,7 @@ import os
 import asyncio
 import requests
 import time
+import psutil  # ТРЕБУЕТСЯ ДЛЯ КОМАНДЫ РЕСУРСОВ
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -136,7 +137,6 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
-    # ИЗМЕНЕНО: Если история не передается (None), то этот блок не выполнится
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -168,7 +168,6 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
     if model_key == "опенроутер":
-        # ИЗМЕНЕНО: Передаем None вместо history, чтобы отключить историю ТОЛЬКО для этой модели
         return send_openrouter_request(user_text, timeout_val, None) 
     raise Exception("Неизвестная модель.")
 
@@ -210,6 +209,56 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "")
 
+    # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
+    clean_cmd = user_text.strip(".,!? ")
+    if clean_cmd in ["ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп"]:
+        try:
+            # Замер CPU (0.1 секунды)
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            mem = psutil.virtual_memory()
+            total_ram_gb = round(mem.total / (1024**3), 1)
+            used_ram_percent = mem.percent
+            
+            # Замер сети за 0.2 секунды
+            net1 = psutil.net_io_counters()
+            time.sleep(0.2)
+            net2 = psutil.net_io_counters()
+            
+            sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 0.2) / 1024, 1)
+            recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 0.2) / 1024, 1)
+
+            # Попытка узнать модель процессора в Linux
+            cpu_model = "Неизвестный процессор"
+            try:
+                with open("/proc/cpuinfo", "r") as f:
+                    for line in f:
+                        if "model name" in line:
+                            cpu_model = line.split(":")[1].strip()
+                            break
+            except Exception:
+                pass
+            
+            text_answer = (
+                f"Сергей ресурсы сервера кибер ноотроп. "
+                f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
+                f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
+                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+            )
+            
+            tts_answer = (
+                f"Сергей ресурсы сервера кибер ноотроп. sil <[600]> "
+                f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
+                f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
+                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
+            )
+        except Exception:
+            text_answer = "Сергей ресурсы сервера кибер ноотроп. Не удалось получить данные о системе."
+            tts_answer = text_answer
+            
+        return {"version": body["version"], "session": body["session"],
+                "response": {"end_session": False, "text": text_answer, "tts": tts_answer}}
+    # ---------------------------------
+
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
@@ -219,14 +268,22 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": menu_text, "tts": menu_text}}
 
-    if user_text in ["вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию"]:
+    # --- ИЗМЕНЕННЫЙ БЛОК С ВАРИАНТАМИ "ВЕРНУТЬ АЛИСУ" ---
+    clean_cmd = user_text.strip(".,!? ")
+    if clean_cmd in [
+        "вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию",
+        "верни алису", "верни алиса", "вернись алиса", "верну алису", "вернуть алиса",
+        "вернись к алисе", "отключи модель", "сбрось модель", "сброс модели", "алису верни",
+        "алису вернуть", "назад к алисе", "стандартная алиса", "без модели", "отключить алису",
+        "отключи алису", "завершить", "выйти", "хватит"
+    ]:
         if user_id in USER_MODELS: del USER_MODELS[user_id]
         if user_id in HISTORY: del HISTORY[user_id]
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
+    # ---------------------------------------------------
 
     found_model_key = None
-    # ИЗМЕНЕНО: ДОБАВЛЕНЫ ВАРИАНТЫ ПРОИЗНОШЕНИЯ ОПЕНРОУТЕРА
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
