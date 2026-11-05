@@ -129,7 +129,7 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
         except Exception as e:
             if str(e) != "503" or attempt == 2:
                 if str(e) == "503":
-                    raise Exception("Сервера Google сейчас перегружены. Попробуйте чуть позже.")
+                    raise Exception("а Google сейчас перегружены. Попробуйте чуть позже.")
                 raise e
             time.sleep(1 * (2 ** attempt))
 
@@ -186,7 +186,7 @@ def fetch_background(user_id: str, session_id: str, user_text: str, model_key: s
         update_history(user_id, "assistant", answer)
     except Exception as e:
         if "перегружены" in str(e):
-            CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуйте чуть позже."]
+            CACHE[session_id] = ["а Google сейчас перегружены. Попробуйте чуть позже."]
         else:
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
@@ -239,20 +239,20 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 pass
             
             text_answer = (
-                f"Сергей ресурсы сервера кибер ноотроп. "
+                f"ресурсы вашего сервера кибер ноотроп. "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
                 f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
             
             tts_answer = (
-                f"Сергей ресурсы сервера кибер ноотроп. sil <[600]> "
+                f"ресурсы вашего сервера кибер ноотроп. sil <[600]> "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
                 f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
                 f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
         except Exception:
-            text_answer = "Сергей ресурсы сервера кибер ноотроп. Не удалось получить данные о системе."
+            text_answer = "ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
             tts_answer = text_answer
             
         return {"version": body["version"], "session": body["session"],
@@ -262,7 +262,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
+            "Джи пи ти — GPT-OSS 120B. Джемини— Gemini Flash. Опен Роутер — OpenRouter Free. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
