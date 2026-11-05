@@ -2,7 +2,7 @@ import os
 import asyncio
 import requests
 import time
-import psutil  # ДОБАВЛЕНО ДЛЯ СБОРА СТАТИСТИКИ
+import psutil  # ТРЕБУЕТСЯ УСТАНОВКА НА RENDER
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -215,12 +215,10 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     clean_cmd = user_text.strip(".,!? ")
     if clean_cmd in ["ресурсы ноотропа", "ресурсы"]:
         try:
-            # Замер CPU (0.1 секунды)
             cpu_percent = psutil.cpu_percent(interval=0.1)
             mem = psutil.virtual_memory()
             mem_percent = mem.percent
             
-            # Замер сети за 0.2 секунды
             net1 = psutil.net_io_counters()
             time.sleep(0.2)
             net2 = psutil.net_io_counters()
@@ -231,13 +229,15 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             sent_kbs = (bytes_sent / 0.2) / 1024
             recv_kbs = (bytes_recv / 0.2) / 1024
             
+            # ИЗМЕНЕН ТЕКСТ ОТВЕТА
             answer = (
+                f"Сергей на твоем сервере кибер ноотроп: "
                 f"Загрузка процессора {int(cpu_percent)} процентов. "
                 f"Свободной памяти {int(100 - mem_percent)} процентов. "
                 f"Сеть: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
             )
         except Exception:
-            answer = "Не удалось получить данные о ресурсах сервера."
+            answer = "Сергей на твоем сервере кибер ноотроп: Не удалось получить данные о ресурсах."
             
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": answer, "tts": answer}}
