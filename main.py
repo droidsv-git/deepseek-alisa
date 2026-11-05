@@ -11,11 +11,9 @@ GPT_API_KEY = os.getenv("GPT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
-SAMBANOVA_API_URL = "https://api.sambanova.ai/v1/chat/completions"
-SAMBANOVA_MODELS_URL = "https://api.sambanova.ai/v1/models"
-
-DEEPSEEK_MODEL = None
+# Заменили SambaNova на GitHub Models
+GITHUB_API_KEY = os.getenv("GITHUB_API_KEY")
+GITHUB_API_URL = "https://models.github.ai/inference/chat/completions"
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
@@ -23,37 +21,8 @@ CACHE = {}
 USER_MODELS = {}
 
 
-def load_deepseek_model():
-    global DEEPSEEK_MODEL
-
-    try:
-        response = requests.get(
-            SAMBANOVA_MODELS_URL,
-            headers={"Authorization": f"Bearer {SAMBANOVA_API_KEY}"},
-            timeout=10
-        )
-
-        data = response.json()
-
-        models = data.get("data", [])
-
-        deepseek_models = [
-            model["id"]
-            for model in models
-            if "deepseek" in model.get("id", "").lower()
-        ]
-
-        if deepseek_models:
-            DEEPSEEK_MODEL = deepseek_models[0]
-
-    except Exception:
-        DEEPSEEK_MODEL = None
-
-
 @app.on_event("startup")
 async def startup_event():
-    load_deepseek_model()
-
     async def self_ping():
         while True:
             await asyncio.sleep(600)
@@ -68,15 +37,6 @@ async def startup_event():
 @app.get("/")
 async def root():
     return {"status": "awake"}
-
-
-def get_deepseek_model():
-    global DEEPSEEK_MODEL
-
-    if not DEEPSEEK_MODEL:
-        load_deepseek_model()
-
-    return DEEPSEEK_MODEL
 
 
 def split_text(text: str, size: int = 900):
@@ -170,26 +130,19 @@ def send_gemini_request(user_text: str, timeout_val: int):
         raise Exception(f"Gemini API Error: {data}")
 
 
-def send_sambanova_request(user_text: str, timeout_val: int):
-    if not SAMBANOVA_API_KEY:
-        raise Exception("Не задан SAMBANOVA_API_KEY.")
-
-    model_path = get_deepseek_model()
-
-    if not model_path:
-        raise Exception(
-            "DeepSeek недоступен в SambaNova. "
-            "Проверьте список моделей: https://api.sambanova.ai/v1/models"
-        )
+def send_github_request(user_text: str, timeout_val: int):
+    if not GITHUB_API_KEY:
+        raise Exception("Не задан GITHUB_API_KEY.")
 
     response = requests.post(
-        SAMBANOVA_API_URL,
+        GITHUB_API_URL,
         headers={
-            "Authorization": f"Bearer {SAMBANOVA_API_KEY}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {GITHUB_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/vnd.github+json"
         },
         json={
-            "model": model_path,
+            "model": "deepseek/DeepSeek-R1",  # Официальный ID модели в GitHub
             "messages": [
                 {
                     "role": "system",
@@ -211,7 +164,7 @@ def send_sambanova_request(user_text: str, timeout_val: int):
     data = response.json()
 
     if "choices" not in data:
-        raise Exception(f"SambaNova DeepSeek API Error: {data}")
+        raise Exception(f"GitHub Models API Error: {data}")
 
     message = data["choices"][0]["message"]
 
@@ -239,7 +192,7 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
         )
 
     if model_key == "дипсик":
-        return send_sambanova_request(
+        return send_github_request(
             user_text=user_text,
             timeout_val=timeout_val
         )
@@ -248,28 +201,32 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
 
 
 def get_intro_prompt(model_key: str):
+    # ТЕПЕРЬ МОДЕЛИ ЗНАЮТ, ЧТО ВАС ЗОВУТ СЕРГЕЙ
     if model_key == "джипити":
         return (
             "Представься от первого лица на русском языке. "
-            "Поприветствуй пользователя, скажи, что тебя зовут Джипити "
+            "Обращайся к пользователю по имени Сергей, будто вы старые добрые друзья, которые знакомы много лет. "
+            "Поприветствуй его тепло и неформально, скажи, что тебя зовут Джипити "
             "и что ты языковая модель GPT-OSS 120B. "
-            "Ответь коротко, вежливо и без Markdown."
+            "Ответь коротко и без Markdown."
         )
 
     if model_key == "джемини":
         return (
             "Представься от первого лица на русском языке. "
-            "Поприветствуй пользователя, скажи, что тебя зовут Джемини "
+            "Обращайся к пользователю по имени Сергей, будто вы старые добрые друзья, которые знакомы много лет. "
+            "Поприветствуй его тепло и неформально, скажи, что тебя зовут Джемини "
             "и что ты языковая модель Gemini Flash от Google. "
-            "Ответь коротко, вежливо и без Markdown."
+            "Ответь коротко и без Markdown."
         )
 
     if model_key == "дипсик":
         return (
             "Представься от первого лица на русском языке. "
-            "Поприветствуй пользователя, скажи, что тебя зовут Дипсик "
+            "Обращайся к пользователю по имени Сергей, будто вы старые добрые друзья, которые знакомы много лет. "
+            "Поприветствуй его тепло и неформально, скажи, что тебя зовут Дипсик "
             "и что ты языковая модель DeepSeek. "
-            "Ответь коротко, вежливо и без Markdown."
+            "Ответь коротко и без Markdown."
         )
 
 
@@ -372,8 +329,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         intro_prompt = get_intro_prompt(found_model_key)
 
         try:
-            # Приветствие генерирует выбранная модель через API
-            # и сразу озвучивается Станцией.
             # Таймаут не изменён: 3.5 секунды.
             greeting = send_request_to_provider(
                 found_model_key,
