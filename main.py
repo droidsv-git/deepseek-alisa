@@ -67,70 +67,7 @@ def split_text(text: str, size: int = 900):
         text = text[split_idx:].lstrip()
     return chunks
 
-# --- ПРОГРЕВ МОДЕЛИ (БЕЗ ВЫВОДА РЕЗУЛЬТАТА) ---
-
-def warmup_groq():
-    try:
-        requests.post(
-            GROQ_API_URL,
-            headers={"Authorization": f"Bearer {GPT_API_KEY}"},
-            json={
-                "model": "openai/gpt-oss-120b",
-                "messages": [{"role": "user", "content": "hello"}],
-                "max_tokens": 1
-            },
-            timeout=3.0
-        )
-    except Exception:
-        pass
-
-def warmup_gemini():
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    )
-    try:
-        requests.post(
-            url,
-            json={
-                "contents": [{"parts": [{"text": "hello"}]}],
-                "generationConfig": {"maxOutputTokens": 1}
-            },
-            timeout=3.0
-        )
-    except Exception:
-        pass
-
-def warmup_github():
-    if not GITHUB_API_KEY:
-        return
-    try:
-        requests.post(
-            GITHUB_API_URL,
-            headers={
-                "Authorization": f"Bearer {GITHUB_API_KEY}",
-                "Content-Type": "application/json",
-                "Accept": "application/vnd.github+json"
-            },
-            json={
-                "model": "deepseek/DeepSeek-R1",
-                "messages": [{"role": "user", "content": "hello"}],
-                "max_tokens": 1
-            },
-            timeout=3.0
-        )
-    except Exception:
-        pass
-
-def warmup_model(model_key: str):
-    if model_key == "джипити":
-        warmup_groq()
-    elif model_key == "джемини":
-        warmup_gemini()
-    elif model_key == "дипсик":
-        warmup_github()
-
-# --- ОТПРАВКА ЗАПРОСОВ С ПОВТОРАМИ (WEBHOOK) ---
+# --- БАЗОВЫЕ ЗАПРОСЫ ---
 
 def send_groq_request(model_path: str, user_text: str, timeout_val: int, history: list = None):
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
@@ -138,28 +75,19 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int, history
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
     
-    for attempt in range(3):
-        try:
-            response = requests.post(
-                GROQ_API_URL,
-                headers={"Authorization": f"Bearer {GPT_API_KEY}"},
-                json={"model": model_path, "messages": messages},
-                timeout=timeout_val
-            )
-            data = response.json()
-            if "choices" not in data:
-                raise Exception("Ошибка Groq.")
-            message = data["choices"][0]["message"]
-            return (message.get("content") or message.get("reasoning") or "").strip()
-        except requests.exceptions.RequestException:
-            if attempt == 2:
-                raise Exception("Webhook timeout")
+    response = requests.post(
+        GROQ_API_URL,
+        headers={"Authorization": f"Bearer {GPT_API_KEY}"},
+        json={"model": model_path, "messages": messages},
+        timeout=timeout_val
+    )
+    data = response.json()
+    if "choices" not in data: raise Exception("Ошибка Groq.")
+    message = data["choices"][0]["message"]
+    return (message.get("content") or message.get("reasoning") or "").strip()
 
 def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     max_tokens = 30 if is_greeting else 1024
     contents = []
     if history:
@@ -167,104 +95,110 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_text}]})
 
-    for attempt in range(3):
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
-                    "contents": contents,
-                    "generationConfig": {"maxOutputTokens": max_tokens}
-                },
-                timeout=timeout_val
-            )
-            if response.status_code == 503:
-                raise Exception("503")
-            data = response.json()
-            if "error" in data:
-                if data["error"].get("code") == 503:
-                    raise Exception("503")
-                else:
-                    raise Exception("Ошибка Google API.")
-            try:
-                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            except Exception:
-                raise Exception("Не удалось получить ответ от Google.")
-        except requests.exceptions.RequestException:
-            # Если это таймаут (Webhook)
-            if attempt == 2:
-                raise Exception("Webhook timeout")
-            time.sleep(0.1) # небольшая пауза перед повтором
-        except Exception as e:
-            # Обработка 503 с задержкой
-            if str(e) == "503":
-                if attempt == 2:
-                    raise Exception("Сервера Google сейчас перегружены. Попробуйте чуть позже.")
-                time.sleep(1 * (2 ** attempt))
-                continue
-            raise e
+    response = requests.post(
+        url,
+        json={
+            "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": max_tokens}
+        },
+        timeout=timeout_val
+    )
+    
+    if response.status_code == 503:
+        raise Exception("Сервера Google сейчас перегружены. Попробуйте чуть позже.")
+        
+    data = response.json()
+    if "error" in data:
+        raise Exception("Ошибка Google API.")
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception:
+        raise Exception("Не удалось получить ответ от Google.")
 
 def send_github_request(user_text: str, timeout_val: int, history: list = None):
-    if not GITHUB_API_KEY:
-        raise Exception("Не задан GITHUB_API_KEY.")
+    if not GITHUB_API_KEY: raise Exception("Не задан GITHUB_API_KEY.")
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
     
-    for attempt in range(3):
-        try:
-            response = requests.post(
-                GITHUB_API_URL,
-                headers={
-                    "Authorization": f"Bearer {GITHUB_API_KEY}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/vnd.github+json"
-                },
-                json={"model": "deepseek/DeepSeek-R1", "messages": messages},
-                timeout=timeout_val
-            )
-            data = response.json()
-            if "choices" not in data:
-                raise Exception("Ошибка GitHub.")
-            message = data["choices"][0]["message"]
-            return (message.get("content") or message.get("reasoning_content") or "").strip()
-        except requests.exceptions.RequestException:
-            if attempt == 2:
-                raise Exception("Webhook timeout")
+    response = requests.post(
+        GITHUB_API_URL,
+        headers={"Authorization": f"Bearer {GITHUB_API_KEY}", "Content-Type": "application/json", "Accept": "application/vnd.github+json"},
+        json={"model": "deepseek/DeepSeek-R1", "messages": messages},
+        timeout=timeout_val
+    )
+    data = response.json()
+    if "choices" not in data: raise Exception("Ошибка GitHub.")
+    message = data["choices"][0]["message"]
+    return (message.get("content") or message.get("reasoning_content") or "").strip()
 
 def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 30, is_greeting: bool = False, user_id: str = None):
     history = get_history(user_id) if user_id else []
-    if model_key == "джипити":
-        return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
-    if model_key == "джемини":
-        return send_gemini_request(user_text, timeout_val, is_greeting, history)
-    if model_key == "дипсик":
-        return send_github_request(user_text, timeout_val, history)
+    if model_key == "джипити": return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
+    if model_key == "джемини": return send_gemini_request(user_text, timeout_val, is_greeting, history)
+    if model_key == "дипсик": return send_github_request(user_text, timeout_val, history)
     raise Exception("Неизвестная модель.")
 
-def get_intro_prompt(model_key: str):
-    if model_key == "джипити":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
-    if model_key == "джемини":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
-    if model_key == "дипсик":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Дипсик (DeepSeek)."
+# --- ОБРАБОТКА WEBHOOK С НОРМАЛЬНЫМ ТАЙМАУТОМ ---
+
+def do_sync_request_with_retry(func, *args, **kwargs):
+    last_error = None
+    start_time = time.time()
+    
+    for attempt in range(3):
+        # Если уже прошло 3.8 секунды, нет смысла начинать новую попытку, Алиса вот-вот оборвет
+        if time.time() - start_time >= 3.8:
+            break
+            
+        try:
+            # НОРМАЛЬНЫЙ ТАЙМАУТ 3.5 СЕКУНДЫ НА ПОПЫТКУ
+            return func(*args, timeout_val=3.5, **kwargs)
+        except requests.exceptions.RequestException as e:
+            # Ловим Webhook (таймаут) или сетевую ошибку
+            last_error = e
+            time.sleep(0.1)
+        except Exception as e:
+            if "перегружены" in str(e):
+                last_error = e
+                time.sleep(0.5)
+            else:
+                raise e
+                
+    raise last_error
+
+def warmup_model(model_key: str):
+    """Синхронный прогрев. Ошибки игнорируются."""
+    try:
+        if model_key == "джипити": send_groq_request("openai/gpt-oss-120b", "hello", timeout_val=2.0)
+        elif model_key == "джемини": send_gemini_request("hello", timeout_val=2.0, is_greeting=True)
+        elif model_key == "дипсик": send_github_request("hello", timeout_val=2.0)
+    except Exception:
+        pass
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
-    try:
-        answer = send_request_to_provider(model_key, user_text, timeout_val=30, user_id=user_id)
-        CACHE[session_id] = split_text(answer, 900)
-        update_history(user_id, "assistant", answer)
-    except Exception as e:
-        if "перегружены" in str(e):
-            CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуйте чуть позже."]
-        else:
-            CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
+    for attempt in range(3):
+        try:
+            answer = send_request_to_provider(model_key, user_text, timeout_val=30, user_id=user_id)
+            CACHE[session_id] = split_text(answer, 900)
+            update_history(user_id, "assistant", answer)
+            break
+        except Exception as e:
+            if attempt == 2:
+                if "перегружены" in str(e):
+                    CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуйте чуть позже."]
+                else:
+                    CACHE[session_id] = [f"Ошибка после 3 попыток: {str(e)[:100]}"]
+            else:
+                time.sleep(1)
 
-async def safe_sync_call(func, *args, **kwargs):
-    loop = asyncio.get_event_loop()
-    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=4.0)
+def get_intro_prompt(model_key: str):
+    if model_key == "джипити": return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
+    if model_key == "джемини": return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
+    if model_key == "дипсик": return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Дипсик (DeepSeek)."
+
+# --- ГЛАВНЫЙ ЭНДПОИНТ ---
 
 @app.post("/")
 async def main(request: Request, background_tasks: BackgroundTasks):
@@ -277,21 +211,20 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "джипити")
 
+    # 1. Меню
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
-        menu_text = (
-            "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Дипсик — DeepSeek. "
-            "Вернуть Алису. Какую модель подключить?"
-        )
+        menu_text = "Кибер Ноотроп запущен. Подключенные модели: Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Дипсик — DeepSeek. Вернуть Алису. Какую модель подключить?"
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": menu_text, "tts": menu_text}}
 
+    # 2. Сброс
     if user_text in ["вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию"]:
         if user_id in USER_MODELS: del USER_MODELS[user_id]
         if user_id in HISTORY: del HISTORY[user_id]
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
 
+    # 3. Выбор модели
     found_model_key = None
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
@@ -325,16 +258,22 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         if session_id in CACHE: del CACHE[session_id]
         if user_id in HISTORY: del HISTORY[user_id]
 
-        # --- ПРОГРЕВ МОДЕЛИ ---
+        # Синхронный прогрев (ошибки игнорируются)
         warmup_model(found_model_key)
 
         intro_prompt = get_intro_prompt(found_model_key)
         CACHE[session_id] = "PENDING"
 
         try:
-            greeting = await safe_sync_call(
-                send_request_to_provider, found_model_key, intro_prompt,
-                timeout_val=4.0, is_greeting=True, user_id=user_id
+            # Запрос на приветствие с 3 попытками (внутри функция do_sync_request_with_retry)
+            # Внешний wait_for дает 4.0 секунды, чтобы Алиса не оборвала связь
+            loop = asyncio.get_event_loop()
+            greeting = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: do_sync_request_with_retry(
+                    send_request_to_provider, found_model_key, intro_prompt,
+                    is_greeting=True, user_id=user_id
+                )),
+                timeout=4.0
             )
             answer = f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису»."
             del CACHE[session_id]
@@ -346,11 +285,13 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 return {"version": body["version"], "session": body["session"],
                         "response": {"end_session": False, "text": str(e), "tts": str(e)}}
 
+            # Если 3 попытки не удались или вышли за 4.0 сек, уходим в фон
             background_tasks.add_task(fetch_background, user_id, session_id, intro_prompt, found_model_key)
             answer = f"Подключаю модель {found_model_key.capitalize()}. Она формирует приветствие. Скажите «готово», чтобы услышать его."
             return {"version": body["version"], "session": body["session"],
                     "response": {"end_session": False, "text": answer, "tts": answer}}
 
+    # 4. «дальше»
     if user_text in ["дальше", "дальше?"]:
         if session_id in CACHE and CACHE[session_id] != "PENDING":
             chunks = CACHE[session_id]
@@ -364,6 +305,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": answer, "tts": answer}}
 
+    # 5. «готово»
     if user_text in ["готово", "готово?"]:
         if session_id in CACHE:
             status = CACHE[session_id]
@@ -384,14 +326,19 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": answer, "tts": answer}}
 
+    # 6. Новый запрос
     if session_id in CACHE: del CACHE[session_id]
 
     update_history(user_id, "user", user_text)
 
     try:
-        answer = await safe_sync_call(
-            send_request_to_provider, current_model_key, user_text,
-            timeout_val=4.0, is_greeting=False, user_id=user_id
+        loop = asyncio.get_event_loop()
+        answer = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: do_sync_request_with_retry(
+                send_request_to_provider, current_model_key, user_text,
+                is_greeting=False, user_id=user_id
+            )),
+            timeout=4.0
         )
         update_history(user_id, "assistant", answer)
 
@@ -410,6 +357,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             return {"version": body["version"], "session": body["session"],
                     "response": {"end_session": False, "text": str(e), "tts": str(e)}}
 
+        # Уходим в фон
         CACHE[session_id] = "PENDING"
         background_tasks.add_task(fetch_background, user_id, session_id, user_text, current_model_key)
         answer = "Запрос сложный, обрабатываю в фоне. Подожди 5 секунд и спроси «Готово?»"
