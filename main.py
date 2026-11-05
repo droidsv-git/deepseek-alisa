@@ -56,7 +56,7 @@ async def self_ping():
 
 @app.on_event("startup")
 async def startup_event():
-    async asyncio.create_task(self_ping())
+    asyncio.create_task(self_ping())
 
 @app.get("/")
 async def root():
@@ -134,7 +134,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # 0. Структурированное голосовое меню
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
-            "Кибер Ноотроп запущен. Подключенные модели: "
+            "Кибер Ноотроп запущен. Доступные бесплатные модели: "
             "1. Включи джипити — модель GPT-OSS 120B. "
             "2. Включи джемини — модель Gemini 2.5 Flash. "
             "3. Включи дипсик — модель DeepSeek V4 Flash. "
