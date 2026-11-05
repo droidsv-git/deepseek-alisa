@@ -110,7 +110,6 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                     "contents": contents,
                     "generationConfig": {
                         "maxOutputTokens": max_tokens
-                        # СТРОКА thinking_level ПОЛНОСТЬЮ УДАЛЕНА
                     }
                 },
                 timeout=timeout_val
@@ -204,7 +203,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     user_id = body["session"]["user"]["user_id"]
     is_new_session = body.get("session", {}).get("new", False)
 
-    # Сброс при новой сессии, чтобы не было "дефолтной" модели
     if is_new_session:
         USER_MODELS.pop(user_id, None)
         HISTORY.pop(user_id, None)
@@ -227,16 +225,35 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
 
     found_model_key = None
+    
+    # --- ИЗМЕНЕННЫЙ БЛОК ПОИСКА МОДЕЛИ ---
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
-        "джемини": ["джемини", "gemini", "джемени"],
-        "опенроутер": ["опен роутер", "опенроутер", "openrouter", "роутер"]
+        "джемини": ["джемини", "gemini", "джемени", "джеминай"],
+        "опенроутер": [
+            "опен роутер", "опенроутер", "openrouter", "open router", 
+            "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
+            "опен рутер", "опенрутер", "опен раутер", "опенраутер",
+            "роутер", "апи роутер", "опен раутор"
+        ]
     }
+    
+    # Очищаем текст от знаков препинания
     clean_text = user_text.strip(".,!? ")
+    # Убираем лишние пробелы
+    clean_text = " ".join(clean_text.split())
+    clean_text_no_spaces = clean_text.replace(" ", "")
+
     for model_key, aliases in model_aliases.items():
-        if clean_text in aliases:
-            found_model_key = model_key
+        for alias in aliases:
+            alias_clean = alias.strip(".,!? ")
+            # Сравниваем как с пробелами, так и без них
+            if clean_text == alias_clean or clean_text_no_spaces == alias_clean.replace(" ", ""):
+                found_model_key = model_key
+                break
+        if found_model_key:
             break
+    # ------------------------------------
 
     if found_model_key:
         if current_model_key == found_model_key:
