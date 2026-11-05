@@ -135,7 +135,9 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
 def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
-    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+    
+    messages = [{"role": "system", "content": "Ты — Немотрон, языковая модель от NVIDIA. Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+    
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -149,7 +151,7 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
             "X-Title": "Alisa Skill"
         },
         json={
-            "model": "openrouter/free",
+            "model": "nvidia/nemotron-3-super-120b-a12b:free",
             "messages": messages
         },
         timeout=timeout_val
@@ -166,7 +168,7 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
-    if model_key == "опенроутер":
+    if model_key == "немотрон":
         return send_openrouter_request(user_text, timeout_val, history)
     raise Exception("Неизвестная модель.")
 
@@ -175,8 +177,8 @@ def get_intro_prompt(model_key: str):
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
     if model_key == "джемини":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
-    if model_key == "опенроутер":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
+    if model_key == "немотрон":
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Немотрон (Nemotron от NVIDIA)."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
@@ -211,7 +213,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
+            "Джипити — GPT-OSS. Джемини — Gemini Flash. Немотрон — Nemotron от NVIDIA. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
@@ -223,16 +225,19 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
 
-    # --- ИЗМЕНЕН ТОЛЬКО ЭТОТ БЛОК (ДОБАВЛЕНЫ ВАРИАЦИИ И ПРОВЕРКА ПРОБЕЛОВ) ---
     found_model_key = None
     model_aliases = {
-        "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
-        "джемини": ["джемини", "gemini", "джемени", "джеминай"],
-        "опенроутер": [
-            "опен роутер", "опенроутер", "openrouter", "open router", 
-            "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
-            "опен рутер", "опенрутер", "опен раутер", "опенраутер",
-            "роутер", "апи роутер", "опен раутор"
+        # ДОБАВЛЕНЫ ВАРИАНТЫ, ГДЕ СТАНЦИЯ СЪЕДАЕТ ОКОНЧАНИЯ ДЖИПИТИ
+        "джипити": [
+            "джипити", "джипит", "джипи", "жипити", "жипит", "жипи", 
+            "gpt", "гпт", "джи пи ти", "джи пит", "джи пи"
+        ],
+        "джемини": ["джемини", "gemini", "джемени", "джеминай", "джемини"],
+        # ЗАМЕНА ОПЕНРОУТЕРА НА НЕМОТРОН
+        "немотрон": [
+            "немотрон", "немотро", "немотру", "nemotron", "немо трон", 
+            "немо", "немотрон от нвидиа", "нвидиа", "nvidia",
+            "опен роутер", "опенроутер", "openrouter", "роутер" # на всякий случай оставил старые
         ]
     }
     
@@ -248,7 +253,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 break
         if found_model_key:
             break
-    # -------------------------------------------------------------------------
 
     if found_model_key:
         if current_model_key == found_model_key:
