@@ -82,6 +82,7 @@ def send_gemini_request(user_text: str, timeout_val: int):
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
+    # Без ограничений токенов
     response = requests.post(
         url,
         json={"contents": [{"parts": [{"text": user_text}]}]},
@@ -111,8 +112,8 @@ def send_github_request(user_text: str, timeout_val: int):
                     "content": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления."
                 },
                 {"role": "user", "content": user_text}
-            ],
-            "max_tokens": 40
+            ]
+            # Убрано "max_tokens": 40, чтобы не обрубало текст
         },
         timeout=timeout_val
     )
@@ -133,7 +134,6 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
-    # Короткие промпты, чтобы модель успевала ответить
     if model_key == "джипити":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B). Только одно короткое предложение."
     if model_key == "джемини":
@@ -274,7 +274,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         # Таймаут 4.0 секунды
         answer = send_request_to_provider(current_model_key, user_text, timeout_val=4.0)
 
-        # Твоя оригинальная проверка на длину и нарезку
         if len(answer) > 900:
             chunks = split_text(answer, 900)
             first_chunk = chunks.pop(0)
