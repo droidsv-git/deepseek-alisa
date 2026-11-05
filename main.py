@@ -19,9 +19,9 @@ RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
 CACHE = {}
 USER_MODELS = {}
-HISTORY = {}  # {user_id: {"data": [...], "last_update": timestamp}}
+HISTORY = {}
 
-SESSION_TTL = 1800  # 30 минут
+SESSION_TTL = 1800
 
 def get_history(user_id: str):
     if user_id in HISTORY and time.time() - HISTORY[user_id]["last_update"] < SESSION_TTL:
@@ -67,6 +67,71 @@ def split_text(text: str, size: int = 900):
         text = text[split_idx:].lstrip()
     return chunks
 
+# --- ПРОГРЕВ МОДЕЛИ (без вывода результата) ---
+
+def warmup_groq():
+    try:
+        requests.post(
+            GROQ_API_URL,
+            headers={"Authorization": f"Bearer {GPT_API_KEY}"},
+            json={
+                "model": "openai/gpt-oss-120b",
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 1
+            },
+            timeout=3.0
+        )
+    except Exception:
+        pass
+
+def warmup_gemini():
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
+    try:
+        requests.post(
+            url,
+            json={
+                "contents": [{"parts": [{"text": "hello"}]}],
+                "generationConfig": {"maxOutputTokens": 1}
+            },
+            timeout=3.0
+        )
+    except Exception:
+        pass
+
+def warmup_github():
+    if not GITHUB_API_KEY:
+        return
+    try:
+        requests.post(
+            GITHUB_API_URL,
+            headers={
+                "Authorization": f"Bearer {GITHUB_API_KEY}",
+                "Content-Type": "application/json",
+                "Accept": "application/vnd.github+json"
+            },
+            json={
+                "model": "deepseek/DeepSeek-R1",
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 1
+            },
+            timeout=3.0
+        )
+    except Exception:
+        pass
+
+def warmup_model(model_key: str):
+    if model_key == "джипити":
+        warmup_groq()
+    elif model_key == "джемини":
+        warmup_gemini()
+    elif model_key == "дипсик":
+        warmup_github()
+
+# --- ОТПРАВКА ЗАПРОСОВ (С ПОВТОРАМИ) ---
+
 def send_groq_request(model_path: str, user_text: str, timeout_val: int, history: list = None):
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
     if history:
@@ -84,7 +149,7 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int, history
     message = data["choices"][0]["message"]
     return (message.get("content") or message.get("reasoning") or "").strip()
 
-def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
+def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None, retry_count: int = 3):
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
@@ -96,7 +161,8 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_text}]})
 
-    for attempt in range(3):
+    last_error = None
+    for attempt in range(retry_count):
         try:
             response = requests.post(
                 url,
@@ -120,11 +186,12 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
             except Exception:
                 raise Exception("Не удалось получить ответ от Google.")
         except Exception as e:
-            if str(e) != "503" or attempt == 2:
-                if str(e) == "503":
-                    raise Exception("Сервера Google сейчас перегружены. Попробуйте чуть позже.")
-                raise e
-            time.sleep(1 * (2 ** attempt))
+            last_error = e
+            if str(e) == "503" or "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                if attempt < retry_count - 1:
+                    time.sleep(1 * (2 ** attempt))
+                    continue
+            raise last_error
 
 def send_github_request(user_text: str, timeout_val: int, history: list = None):
     if not GITHUB_API_KEY:
@@ -179,7 +246,6 @@ def fetch_background(user_id: str, session_id: str, user_text: str, model_key: s
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
 async def safe_sync_call(func, *args, **kwargs):
-    """Гарантирует, что синхронный вызов не заблокирует ответ дольше лимита Алисы."""
     loop = asyncio.get_event_loop()
     return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=4.0)
 
@@ -223,7 +289,18 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     if found_model_key:
         if current_model_key == found_model_key:
-            answer = f"Модель {found_model_key.capitalize()} уже активна."
+            if session_id in CACHE and CACHE[session_id] != "PENDING":
+                chunks = CACHE[session_id]
+                if chunks:
+                    current_chunk = chunks.pop(0)
+                    if not chunks: del CACHE[session_id]
+                    answer = current_chunk
+                else:
+                    answer = f"Модель {found_model_key.capitalize()} уже активна."
+            elif session_id in CACHE and CACHE[session_id] == "PENDING":
+                answer = "Приветствие еще генерируется, скажи «готово»."
+            else:
+                answer = f"Модель {found_model_key.capitalize()} уже активна."
             return {"version": body["version"], "session": body["session"],
                     "response": {"end_session": False, "text": answer, "tts": answer}}
 
@@ -231,20 +308,27 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         if session_id in CACHE: del CACHE[session_id]
         if user_id in HISTORY: del HISTORY[user_id]
 
+        # ПРОГРЕВ МОДЕЛИ (без вывода результата)
+        warmup_model(found_model_key)
+
         intro_prompt = get_intro_prompt(found_model_key)
+        CACHE[session_id] = "PENDING"
+
         try:
             greeting = await safe_sync_call(
                 send_request_to_provider, found_model_key, intro_prompt,
                 timeout_val=4.0, is_greeting=True, user_id=user_id
             )
             answer = f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису»."
+            del CACHE[session_id]
             return {"version": body["version"], "session": body["session"],
                     "response": {"end_session": False, "text": answer, "tts": answer}}
         except Exception as e:
             if "перегружены" in str(e):
+                del CACHE[session_id]
                 return {"version": body["version"], "session": body["session"],
                         "response": {"end_session": False, "text": str(e), "tts": str(e)}}
-            CACHE[session_id] = "PENDING"
+
             background_tasks.add_task(fetch_background, user_id, session_id, intro_prompt, found_model_key)
             answer = f"Подключаю модель {found_model_key.capitalize()}. Она формирует приветствие. Скажите «готово», чтобы услышать его."
             return {"version": body["version"], "session": body["session"],
@@ -285,7 +369,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     if session_id in CACHE: del CACHE[session_id]
 
-    # Сохраняем вопрос в историю ДО запроса, чтобы он точно не потерялся
     update_history(user_id, "user", user_text)
 
     try:
