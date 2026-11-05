@@ -70,7 +70,7 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int):
     )
     data = response.json()
     if "choices" not in data:
-        raise Exception(f"Groq API Error: {data}")
+        raise Exception("Ошибка Groq.")
     message = data["choices"][0]["message"]
     answer = message.get("content") or message.get("reasoning") or message.get("reasoning_content") or ""
     return answer.strip()
@@ -81,7 +81,6 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
     
-    # Умный лимит: 30 токенов для приветствия, 1024 для обычных вопросов
     max_tokens = 30 if is_greeting else 1024
     
     response = requests.post(
@@ -97,11 +96,23 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
         },
         timeout=timeout_val
     )
+    
+    if response.status_code == 503:
+        raise Exception("Сервера Google сейчас перегружены. Попробуй чуть позже.")
+        
     data = response.json()
+    
+    if "error" in data:
+        code = data["error"].get("code")
+        if code == 503:
+            raise Exception("Сервера Google сейчас перегружены. Попробуй чуть позже.")
+        else:
+            raise Exception(f"Ошибка Google API.")
+            
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception:
-        raise Exception(f"Gemini API Error: {data}")
+        raise Exception("Не удалось получить ответ от Google.")
 
 def send_github_request(user_text: str, timeout_val: int):
     if not GITHUB_API_KEY:
@@ -127,7 +138,7 @@ def send_github_request(user_text: str, timeout_val: int):
     )
     data = response.json()
     if "choices" not in data:
-        raise Exception(f"GitHub Models API Error: {data}")
+        raise Exception("Ошибка GitHub.")
     message = data["choices"][0]["message"]
     answer = message.get("content") or message.get("reasoning_content") or ""
     return answer.strip()
@@ -155,7 +166,10 @@ def fetch_background(session_id: str, user_text: str, model_key: str):
         chunks = split_text(answer, 900)
         CACHE[session_id] = chunks
     except Exception as e:
-        CACHE[session_id] = [f"Ошибка генерации: {str(e)[:150]}"]
+        if "перегружены" in str(e):
+            CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуй чуть позже."]
+        else:
+            CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
 @app.post("/")
 async def main(request: Request, background_tasks: BackgroundTasks):
@@ -191,19 +205,20 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}
         }
 
-    # 3. Выбор модели
+    # 3. Выбор модели (СТРОГОЕ СОВПАДЕНИЕ ДЛЯ ВСЕХ ТРЕХ)
     found_model_key = None
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
         "дипсик": ["дипсик", "deepseek", "дипсиг", "дип сик"]
     }
+    
+    # Очищаем текст от знаков препинания и пробелов по краям
+    clean_text = user_text.strip(".,!? ")
+    
     for model_key, aliases in model_aliases.items():
-        for alias in aliases:
-            if alias in user_text:
-                found_model_key = model_key
-                break
-        if found_model_key:
+        if clean_text in aliases:
+            found_model_key = model_key
             break
 
     if found_model_key:
@@ -213,14 +228,19 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
         intro_prompt = get_intro_prompt(found_model_key)
         try:
-            # Таймаут 4.0 секунды (чтобы Алиса не обрывала) + is_greeting=True
             greeting = send_request_to_provider(found_model_key, intro_prompt, timeout_val=4.0, is_greeting=True)
             answer = f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису»."
             return {
                 "version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": answer, "tts": answer}
             }
-        except Exception:
+        except Exception as e:
+            if "перегружены" in str(e):
+                return {
+                    "version": body["version"], "session": body["session"],
+                    "response": {"end_session": False, "text": str(e), "tts": str(e)}
+                }
+            
             CACHE[session_id] = "PENDING"
             background_tasks.add_task(fetch_background, session_id, intro_prompt, found_model_key)
             answer = f"Подключаю модель {found_model_key.capitalize()}. Она формирует приветствие. Скажите «готово», чтобы услышать его."
@@ -279,7 +299,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         del CACHE[session_id]
 
     try:
-        # Таймаут 4.0 секунды для обычных вопросов
         answer = send_request_to_provider(current_model_key, user_text, timeout_val=4.0, is_greeting=False)
 
         if len(answer) > 900:
@@ -294,7 +313,13 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "response": {"end_session": False, "text": answer, "tts": answer}
         }
 
-    except Exception:
+    except Exception as e:
+        if "перегружены" in str(e):
+            return {
+                "version": body["version"], "session": body["session"],
+                "response": {"end_session": False, "text": str(e), "tts": str(e)}
+            }
+            
         CACHE[session_id] = "PENDING"
         background_tasks.add_task(fetch_background, session_id, user_text, current_model_key)
         answer = "Запрос сложный, обрабатываю в фоне. Подожди 5 секунд и спроси «Готово?»"
