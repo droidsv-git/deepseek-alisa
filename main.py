@@ -144,7 +144,7 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
             "X-Title": "Alisa Skill" # Рекомендуется OpenRouter
         },
         json={
-            "model": "deepseek/deepseek-r1:free",  # Бесплатная модель DeepSeek на OpenRouter
+            "model": "openrouter/free",
             "messages": messages
         },
         timeout=timeout_val
