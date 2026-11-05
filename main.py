@@ -21,21 +21,24 @@ CACHE = {}
 # Хранилище выбранной модели для каждого сеанса пользователя
 USER_MODELS = {}
 
-# Каталог моделей: разделение по провайдерам, бесплатные актуальные пути и приветствия
+# Каталог моделей (команды без слова «включи»)
 AVAILABLE_MODELS = {
     "джипити": {
+        "aliases": ["джипити", "gpt", "гпт", "джи пи ти"],
         "provider": "groq",
         "path": "openai/gpt-oss-120b",
         "name": "GPT-OSS 120B",
         "greeting": "Здравствуйте! Я модель Джипити GPT-OSS 120B, готова к работе."
     },
     "джемини": {
+        "aliases": ["джемини", "gemini", "джемени"],
         "provider": "openrouter",
         "path": "google/gemini-2.5-flash:free",
         "name": "Gemini 2.5 Flash",
         "greeting": "Приветствую! Я модель Джемини 2.5 Flash, слушаю вас."
     },
     "дипсик": {
+        "aliases": ["дипсик", "deepseek", "дипсиг", "дип сик"],
         "provider": "openrouter",
         "path": "deepseek/deepseek-v4-flash:free",
         "name": "DeepSeek V4 Flash",
@@ -131,13 +134,13 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # Текущая модель для сессии
     current_model_key = USER_MODELS.get(session_id, DEFAULT_MODEL_KEY)
 
-    # 0. Структурированное голосовое меню
+    # 0. Структурированное голосовое меню (без слова «включи»)
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
-            "Кибер Ноотроп запущен. Доступные бесплатные модели: "
-            "1. Включи джипити — модель GPT-OSS 120B. "
-            "2. Включи джемини — модель Gemini 2.5 Flash. "
-            "3. Включи дипсик — модель DeepSeek V4 Flash. "
+            "Кибер Ноотроп запущен. Подключенные модели: "
+            "1. Джипити — модель GPT-OSS 120B. "
+            "2. Джемини — модель Gemini 2.5 Flash. "
+            "3. Дипсик — модель DeepSeek V4 Flash. "
             "4. Вернуться к Алисе. "
             "Какую модель подключить?"
         )
@@ -158,22 +161,20 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "response": {"end_session": True, "text": answer, "tts": answer}
         }
 
-    # Обработка переключения моделей по голосовой команде
-    if "включи" in user_text or "переключи на" in user_text:
-        switched = False
-        model_greeting = ""
-        for trigger_word, m_data in AVAILABLE_MODELS.items():
-            if trigger_word in user_text:
-                USER_MODELS[session_id] = trigger_word
-                current_model_key = trigger_word
-                model_greeting = m_data["greeting"]
-                switched = True
+    # Прямое переключение по имени модели (без обязательного слова «включи»)
+    found_model_key = None
+    for m_key, m_data in AVAILABLE_MODELS.items():
+        for alias in m_data["aliases"]:
+            if alias in user_text:
+                found_model_key = m_key
                 break
-        
-        if switched:
-            answer = f"Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуться к алисе». {model_greeting}"
-        else:
-            answer = "Не нашла такую модель. Скажи «меню», чтобы услышать список."
+        if found_model_key:
+            break
+
+    if found_model_key:
+        USER_MODELS[session_id] = found_model_key
+        model_greeting = AVAILABLE_MODELS[found_model_key]["greeting"]
+        answer = f"Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуться к алисе». {model_greeting}"
         return {
             "version": body["version"],
             "session": body["session"],
