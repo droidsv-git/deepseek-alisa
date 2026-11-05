@@ -140,11 +140,11 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
         headers={
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://deepseek-alisa-fusq.onrender.com", # Рекомендуется OpenRouter
-            "X-Title": "Alisa Skill" # Рекомендуется OpenRouter
+            "HTTP-Referer": "https://deepseek-alisa-fusq.onrender.com",
+            "X-Title": "Alisa Skill"
         },
         json={
-            "model": "openrouter/free",
+            "model": "openrouter/free",  # Роутер сам выбирает доступную бесплатную модель
             "messages": messages
         },
         timeout=timeout_val
@@ -161,7 +161,7 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
-    if model_key == "дипсик":
+    if model_key == "опенроутер":
         return send_openrouter_request(user_text, timeout_val, history)
     raise Exception("Неизвестная модель.")
 
@@ -170,8 +170,8 @@ def get_intro_prompt(model_key: str):
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
     if model_key == "джемини":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
-    if model_key == "дипсик":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Дипсик (DeepSeek)."
+    if model_key == "опенроутер":
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
@@ -200,9 +200,10 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     current_model_key = USER_MODELS.get(user_id, "")
 
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
+        # ИЗМЕНЕНО МЕНЮ
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Дипсик — DeepSeek. "
+            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
@@ -218,7 +219,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
-        "дипсик": ["дипсик", "deepseek", "дипсиг", "дип сик"]
+        "опенроутер": ["опен роутер", "опенроутер", "openrouter", "роутер"] # ИЗМЕНЕНЫ КОМАНДЫ ЗАПУСКА
     }
     clean_text = user_text.strip(".,!? ")
     for model_key, aliases in model_aliases.items():
