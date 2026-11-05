@@ -2,7 +2,6 @@ import os
 import asyncio
 import requests
 import time
-import psutil
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -13,11 +12,8 @@ GPT_API_KEY = os.getenv("GPT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
-# Ключ OpenRouter используется для доступа к Nemotron
-NEMOTRON_API_KEY = os.getenv("OPENROUTER_API_KEY")
-NEMOTRON_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-# Бесплатная модель Nemotron 3 Ultra от NVIDIA
-NEMOTRON_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
@@ -72,7 +68,7 @@ def split_text(text: str, size: int = 900):
     return chunks
 
 def send_groq_request(model_path: str, user_text: str, timeout_val: int, history: list = None):
-    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде (например: я рада, я готова, я сделала)."}]
+    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -136,36 +132,32 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 raise e
             time.sleep(1 * (2 ** attempt))
 
-def send_nemotron_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
-    if not NEMOTRON_API_KEY:
-        raise Exception("Не задан OPENROUTER_API_KEY для Nemotron.")
-    
-    messages = [{"role": "system", "content": "Ты — Немотрон (Nemotron) от NVIDIA. Отвечай на русском языке. Не используй Markdown. Отвечай кратко. Говори о себе только в женском роде."}]
+def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
+    if not OPENROUTER_API_KEY:
+        raise Exception("Не задан OPENROUTER_API_KEY.")
+    messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
+    # ИЗМЕНЕНО: Если история не передается (None), то этот блок не выполнится
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
     
-    # Ограничиваем длину ответа для приветствия, чтобы не тормозило
-    max_tokens = 60 if is_greeting else 1024
-    
     response = requests.post(
-        NEMOTRON_API_URL,
+        OPENROUTER_API_URL,
         headers={
-            "Authorization": f"Bearer {NEMOTRON_API_KEY}",
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://deepseek-alisa-fusq.onrender.com",
             "X-Title": "Alisa Skill"
         },
         json={
-            "model": NEMOTRON_MODEL,
-            "messages": messages,
-            "max_tokens": max_tokens
+            "model": "openrouter/free",
+            "messages": messages
         },
         timeout=timeout_val
     )
     data = response.json()
     if "choices" not in data:
-        raise Exception(f"Ошибка Nemotron: {data}")
+        raise Exception(f"Ошибка OpenRouter: {data}")
     message = data["choices"][0]["message"]
     return (message.get("content") or message.get("reasoning_content") or "").strip()
 
@@ -175,27 +167,27 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
-    if model_key == "немотрон":
-        # Для Nemotron историю пока не передаем, чтобы избежать таймаутов
-        return send_nemotron_request(user_text, timeout_val, is_greeting, None)
+    if model_key == "опенроутер":
+        # ИЗМЕНЕНО: Передаем None вместо history, чтобы отключить историю ТОЛЬКО для этой модели
+        return send_openrouter_request(user_text, timeout_val, None) 
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
     if model_key == "джипити":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B). Обязательно говори о себе в женском роде."
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
     if model_key == "джемини":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
-    if model_key == "немотрон":
-        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Немотрон (Nemotron от NVIDIA). Обязательно говори о себе в женском роде."
+    if model_key == "опенроутер":
+        return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
-        answer = send_request_to_provider(model_key, user_text, timeout_val=40, user_id=user_id)
+        answer = send_request_to_provider(model_key, user_text, timeout_val=30, user_id=user_id)
         CACHE[session_id] = split_text(answer, 900)
         update_history(user_id, "assistant", answer)
     except Exception as e:
         if "перегружены" in str(e):
-            CACHE[session_id] = ["Сервера сейчас перегружены. Попробуйте чуть позже."]
+            CACHE[session_id] = ["Сервера Google сейчас перегружены. Попробуйте чуть позже."]
         else:
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
@@ -218,113 +210,37 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     current_model_key = USER_MODELS.get(user_id, "")
 
-    # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
-    clean_cmd = user_text.strip(".,!? ")
-    clean_cmd_no_spaces = "".join(clean_cmd.split())
-    
-    resource_commands = [
-        "ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп",
-        "ресурсы сервер", "ресурс сервера", "ресурс сервер", "ресурсы кибер ноотроп",
-        "покажи ресурсы", "загрузка сервера", "нагрузка сервера", "состояние сервера",
-        "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон", 
-        "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
-        "ресурсы кибер", "кибер ресурсы", "ресурсы сервера нооттроп", "ресурсы сервер ноотроп",
-        "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп",
-        "мониторинг сервера", "мониторинг", "нагрузка", "ресурсы"
-    ]
-    resource_commands_no_spaces = [cmd.replace(" ", "") for cmd in resource_commands]
-    
-    if clean_cmd_no_spaces in resource_commands_no_spaces:
-        try:
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            mem = psutil.virtual_memory()
-            total_ram_gb = round(mem.total / (1024**3), 1)
-            used_ram_percent = mem.percent
-            
-            net1 = psutil.net_io_counters()
-            time.sleep(0.2)
-            net2 = psutil.net_io_counters()
-            
-            sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 0.2) / 1024, 1)
-            recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 0.2) / 1024, 1)
-
-            cpu_model = "Неизвестный процессор"
-            try:
-                with open("/proc/cpuinfo", "r") as f:
-                    for line in f:
-                        if "model name" in line:
-                            cpu_model = line.split(":")[1].strip()
-                            break
-            except Exception:
-                pass
-            
-            text_answer = (
-                f"Ресурсы вашего сервера кибер ноотроп. "
-                f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
-                f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
-                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
-            )
-            
-            tts_answer = (
-                f"Ресурсы вашего сервера кибер ноотроп. sil <[600]> "
-                f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
-                f"Оперативная память: {total_ram_gb} гигабайт, использовано {int(used_ram_percent)} процентов. "
-                f"Сетевой трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду."
-            )
-        except Exception:
-            text_answer = "Ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
-            tts_answer = text_answer
-            
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": text_answer, "tts": tts_answer}}
-    # ---------------------------------
-
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
-            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Немотрон — Nemotron от NVIDIA. "
+            "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
             "Вернуть Алису. Какую модель подключить?"
         )
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": False, "text": menu_text, "tts": menu_text}}
 
-    # --- ВАРИАНТЫ "ВЕРНУТЬ АЛИСУ" ---
-    clean_cmd = user_text.strip(".,!? ")
-    if clean_cmd in [
-        "вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию",
-        "верни алису", "верни алиса", "вернись алиса", "верну алису", "вернуть алиса",
-        "вернись к алисе", "отключи модель", "сбрось модель", "сброс модели", "алису верни",
-        "алису вернуть", "назад к алисе", "стандартная алиса", "без модели", "отключить алису",
-        "отключи алису", "завершить", "выйти", "хватит"
-    ]:
+    if user_text in ["вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию"]:
         if user_id in USER_MODELS: del USER_MODELS[user_id]
         if user_id in HISTORY: del HISTORY[user_id]
         return {"version": body["version"], "session": body["session"],
                 "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
-    # ---------------------------------------------------
 
     found_model_key = None
-    # --- СПИСОК ДЛЯ НЕМОТРОНА ---
+    # ИЗМЕНЕНО: ДОБАВЛЕНЫ ВАРИАНТЫ ПРОИЗНОШЕНИЯ ОПЕНРОУТЕРА
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
-        "немотрон": [
-            "немотрон", "nemotron", "немо трон", "немотрон от нвидиа",
-            "нвидиа", "nvidia", "немотрон нвидиа", "немотрон nvidia"
+        "опенроутер": [
+            "опен роутер", "опенроутер", "openrouter", "open router", 
+            "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
+            "опен рутер", "опенрутер", "опен раутер", "опенраутер",
+            "роутер", "апи роутер", "опен раутор"
         ]
     }
-    # ---------------------------------------------------
-    
     clean_text = user_text.strip(".,!? ")
-    clean_text_no_spaces = "".join(clean_text.split())
-
     for model_key, aliases in model_aliases.items():
-        for alias in aliases:
-            alias_clean_no_spaces = "".join(alias.replace(" ", "").split())
-            if clean_text_no_spaces == alias_clean_no_spaces:
-                found_model_key = model_key
-                break
-        if found_model_key:
+        if clean_text in aliases:
+            found_model_key = model_key
             break
 
     if found_model_key:
