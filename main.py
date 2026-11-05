@@ -12,14 +12,15 @@ GPT_API_KEY = os.getenv("GPT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
+# ИСПРАВЛЕН ПРАВИЛЬНЫЙ URL ДЛЯ GITHUB MODELS
 GITHUB_API_KEY = os.getenv("GITHUB_API_KEY")
-GITHUB_API_URL = "https://models.github.ai/inference/chat/completions"
+GITHUB_API_URL = "https://models.inference.ai.azure.com/chat/completions"
 
 RENDER_URL = "https://deepseek-alisa-fusq.onrender.com"
 
 CACHE = {}
 USER_MODELS = {}
-HISTORY = {}  # {user_id: {"data": [...], "last_update": timestamp}}
+HISTORY = {}
 
 SESSION_TTL = 1800  # 30 минут
 
@@ -133,14 +134,17 @@ def send_github_request(user_text: str, timeout_val: int, history: list = None):
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
+    
     response = requests.post(
         GITHUB_API_URL,
         headers={
             "Authorization": f"Bearer {GITHUB_API_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "application/vnd.github+json"
+            "Content-Type": "application/json"
         },
-        json={"model": "deepseek/DeepSeek-R1", "messages": messages},
+        json={
+            "model": "DeepSeek-R1",  # ИСПРАВЛЕНО ПРАВИЛЬНОЕ НАЗВАНИЕ МОДЕЛИ
+            "messages": messages
+        },
         timeout=timeout_val
     )
     data = response.json()
@@ -179,7 +183,6 @@ def fetch_background(user_id: str, session_id: str, user_text: str, model_key: s
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
 async def safe_sync_call(func, *args, **kwargs):
-    """Гарантирует, что синхронный вызов не заблокирует ответ дольше лимита Алисы."""
     loop = asyncio.get_event_loop()
     return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=4.0)
 
@@ -192,7 +195,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     user_id = body["session"]["user"]["user_id"]
     is_new_session = body.get("session", {}).get("new", False)
 
-    current_model_key = USER_MODELS.get(user_id, "джипити")
+    current_model_key = USER_MODELS.get(user_id, "")
 
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
         menu_text = (
@@ -285,7 +288,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
 
     if session_id in CACHE: del CACHE[session_id]
 
-    # Сохраняем вопрос в историю ДО запроса, чтобы он точно не потерялся
     update_history(user_id, "user", user_text)
 
     try:
