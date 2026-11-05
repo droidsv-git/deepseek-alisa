@@ -91,10 +91,17 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
     max_tokens = 30 if is_greeting else 1024
+    
+    # --- ИЗМЕНЕНИЕ 1: ОГРАНИЧЕНИЕ ИСТОРИИ ДЛЯ ДЖЕМИНИ ---
+    # Берем только последние 6 сообщений (3 пары вопрос-ответ)
+    trimmed_history = history[-6:] if history else []
+    
     contents = []
-    if history:
-        for msg in history:
+    if trimmed_history:
+        for msg in trimmed_history:
             contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
+    # --------------------------------------------------
+    
     contents.append({"role": "user", "parts": [{"text": user_text}]})
 
     for attempt in range(3):
@@ -104,7 +111,12 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 json={
                     "system_instruction": {"parts": {"text": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}},
                     "contents": contents,
-                    "generationConfig": {"maxOutputTokens": max_tokens}
+                    "generationConfig": {
+                        "maxOutputTokens": max_tokens,
+                        # --- ИЗМЕНЕНИЕ 2: ОТКЛЮЧАЕМ ГЛУБОКОЕ МЫШЛЕНИЕ ---
+                        "thinking_level": "LOW"
+                        # ---------------------------------------------
+                    }
                 },
                 timeout=timeout_val
             )
@@ -200,7 +212,6 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     current_model_key = USER_MODELS.get(user_id, "")
 
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
-        # ИЗМЕНЕНО МЕНЮ
         menu_text = (
             "Кибер Ноотроп запущен. Подключенные модели: "
             "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
@@ -219,7 +230,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     model_aliases = {
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
-        "опенроутер": ["опен роутер", "опенроутер", "openrouter", "роутер"] # ИЗМЕНЕНЫ КОМАНДЫ ЗАПУСКА
+        "опенроутер": ["опен роутер", "опенроутер", "openrouter", "роутер"]
     }
     clean_text = user_text.strip(".,!? ")
     for model_key, aliases in model_aliases.items():
