@@ -82,10 +82,18 @@ def send_gemini_request(user_text: str, timeout_val: int):
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
-    # УБРАНО ЛЮБОЕ ОГРАНИЧЕНИЕ ТОКЕНОВ. Теперь Джемини может писать сколько угодно.
+    # Добавлен адекватный лимит 1024 токена и системный промпт
     response = requests.post(
         url,
-        json={"contents": [{"parts": [{"text": user_text}]}]},
+        json={
+            "system_instruction": {
+                "parts": {"text": "Отвечай на русском языке. Не используй Markdown. Не показывай внутренние размышления."}
+            },
+            "contents": [{"parts": [{"text": user_text}]}],
+            "generationConfig": {
+                "maxOutputTokens": 1024
+            }
+        },
         timeout=timeout_val
     )
     data = response.json()
@@ -113,7 +121,6 @@ def send_github_request(user_text: str, timeout_val: int):
                 },
                 {"role": "user", "content": user_text}
             ]
-            # УБРАНО ЛЮБОЕ ОГРАНИЧЕНИЕ ТОКЕНОВ
         },
         timeout=timeout_val
     )
@@ -134,7 +141,6 @@ def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 
     raise Exception("Неизвестная модель.")
 
 def get_intro_prompt(model_key: str):
-    # Промпты оставляем короткими, чтобы модель успевала подумать, но теперь она не обрубается
     if model_key == "джипити":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джипити (GPT-OSS 120B)."
     if model_key == "джемини":
@@ -144,7 +150,8 @@ def get_intro_prompt(model_key: str):
 
 def fetch_background(session_id: str, user_text: str, model_key: str):
     try:
-        answer = send_request_to_provider(model_key, user_text, timeout_val=45)
+        # Таймаут 30 секунд для фоновой задачи
+        answer = send_request_to_provider(model_key, user_text, timeout_val=30)
         chunks = split_text(answer, 900)
         CACHE[session_id] = chunks
     except Exception as e:
@@ -247,7 +254,8 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         if session_id in CACHE:
             status = CACHE[session_id]
             if status == "PENDING":
-                answer = "Еще думаю над ответом, спроси «Готово?» через секунду."
+                # Изменил сообщение, чтобы ты понимал, что нужно просто подождать
+                answer = "Еще обрабатываю, подожди 3-4 секунды и снова скажи «Готово»."
             else:
                 chunks = status
                 if chunks:
@@ -290,7 +298,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     except Exception:
         CACHE[session_id] = "PENDING"
         background_tasks.add_task(fetch_background, session_id, user_text, current_model_key)
-        answer = "Вопрос сложный, обдумываю в фоне. Спроси «Готово?» через пару секунд."
+        answer = "Запрос сложный, обрабатываю в фоне. Подожди 5 секунд и спроси «Готово?»"
         return {
             "version": body["version"], "session": body["session"],
             "response": {"end_session": False, "text": answer, "tts": answer}
