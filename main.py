@@ -3,6 +3,7 @@ import asyncio
 import requests
 import time
 import psutil  # ДЛЯ КОМАНДЫ РЕСУРСОВ
+import httpx
 from fastapi import FastAPI, Request, BackgroundTasks
 
 app = FastAPI()
@@ -24,10 +25,12 @@ HISTORY = {}
 
 SESSION_TTL = 1800  # 30 минут
 
+
 def get_history(user_id: str):
     if user_id in HISTORY and time.time() - HISTORY[user_id]["last_update"] < SESSION_TTL:
         return HISTORY[user_id]["data"]
     return []
+
 
 def update_history(user_id: str, role: str, content: str):
     if user_id not in HISTORY:
@@ -37,21 +40,32 @@ def update_history(user_id: str, role: str, content: str):
     if len(HISTORY[user_id]["data"]) > 20:
         HISTORY[user_id]["data"] = HISTORY[user_id]["data"][-20:]
 
+
 async def self_ping():
-    while True:
-        await asyncio.sleep(600)
-        try:
-            requests.get(RENDER_URL, timeout=5)
-        except Exception:
-            pass
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        while True:
+            await asyncio.sleep(600)  # 10 минут
+
+            try:
+                await client.get(f"{RENDER_URL}/health")
+            except httpx.HTTPError:
+                pass
+
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(self_ping())
 
+
+@app.get("/health")
+async def health():
+    return {"status": "alive"}
+
+
 @app.get("/")
 async def root():
     return {"status": "awake"}
+
 
 def split_text(text: str, size: int = 900):
     if len(text) <= size:
@@ -67,6 +81,7 @@ def split_text(text: str, size: int = 900):
         chunks.append(text[:split_idx])
         text = text[split_idx:].lstrip()
     return chunks
+
 
 def send_groq_request(model_path: str, user_text: str, timeout_val: int, history: list = None):
     messages = [{"role": "system", "content": "Отвечай на русском языке. Не используй Markdown. Отвечай кратко."}]
@@ -85,20 +100,21 @@ def send_groq_request(model_path: str, user_text: str, timeout_val: int, history
     message = data["choices"][0]["message"]
     return (message.get("content") or message.get("reasoning") or "").strip()
 
+
 def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = False, history: list = None):
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     )
     max_tokens = 30 if is_greeting else 1024
-    
+
     trimmed_history = history[-6:] if history else []
-    
+
     contents = []
     if trimmed_history:
         for msg in trimmed_history:
             contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
-    
+
     contents.append({"role": "user", "parts": [{"text": user_text}]})
 
     for attempt in range(3):
@@ -133,6 +149,7 @@ def send_gemini_request(user_text: str, timeout_val: int, is_greeting: bool = Fa
                 raise e
             time.sleep(1 * (2 ** attempt))
 
+
 def send_openrouter_request(user_text: str, timeout_val: int, history: list = None):
     if not OPENROUTER_API_KEY:
         raise Exception("Не задан OPENROUTER_API_KEY.")
@@ -140,7 +157,7 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
-    
+
     response = requests.post(
         OPENROUTER_API_URL,
         headers={
@@ -161,15 +178,23 @@ def send_openrouter_request(user_text: str, timeout_val: int, history: list = No
     message = data["choices"][0]["message"]
     return (message.get("content") or message.get("reasoning_content") or "").strip()
 
-def send_request_to_provider(model_key: str, user_text: str, timeout_val: int = 30, is_greeting: bool = False, user_id: str = None):
+
+def send_request_to_provider(
+    model_key: str,
+    user_text: str,
+    timeout_val: int = 30,
+    is_greeting: bool = False,
+    user_id: str = None
+):
     history = get_history(user_id) if user_id else []
     if model_key == "джипити":
         return send_groq_request("openai/gpt-oss-120b", user_text, timeout_val, history)
     if model_key == "джемини":
         return send_gemini_request(user_text, timeout_val, is_greeting, history)
     if model_key == "опенроутер":
-        return send_openrouter_request(user_text, timeout_val, None) 
+        return send_openrouter_request(user_text, timeout_val, None)
     raise Exception("Неизвестная модель.")
+
 
 def get_intro_prompt(model_key: str):
     if model_key == "джипити":
@@ -178,6 +203,7 @@ def get_intro_prompt(model_key: str):
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Джемини (Gemini Flash от Google)."
     if model_key == "опенроутер":
         return "Поздоровайся с Сергеем по имени, как старый друг. Скажи что ты Опен Роутер (OpenRouter)."
+
 
 def fetch_background(user_id: str, session_id: str, user_text: str, model_key: str):
     try:
@@ -190,9 +216,14 @@ def fetch_background(user_id: str, session_id: str, user_text: str, model_key: s
         else:
             CACHE[session_id] = [f"Ошибка: {str(e)[:150]}"]
 
+
 async def safe_sync_call(func, *args, **kwargs):
     loop = asyncio.get_event_loop()
-    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=4.0)
+    return await asyncio.wait_for(
+        loop.run_in_executor(None, lambda: func(*args, **kwargs)),
+        timeout=4.0
+    )
+
 
 @app.post("/")
 async def main(request: Request, background_tasks: BackgroundTasks):
@@ -212,12 +243,12 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     # --- СКРЫТАЯ КОМАНДА РЕСУРСОВ ---
     clean_cmd = user_text.strip(".,!? ")
     clean_cmd_no_spaces = "".join(clean_cmd.split())
-    
+
     resource_commands = [
         "ресурсы сервера ноотроп", "ресурсы сервера", "ресурсы ноотропа", "ресурсы ноотроп",
         "ресурсы сервер", "ресурс сервера", "ресурс сервер", "ресурсы кибер ноотроп",
         "покажи ресурсы", "загрузка сервера", "нагрузка сервера", "состояние сервера",
-        "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон", 
+        "статус сервера", "ресурсы системы", "ресурсы ноутроп", "ресурсы неотрон",
         "ресурсы нотрон", "сервер ресурсы", "сервер загрузка", "ресурсы сервера ноутроп",
         "ресурсы кибер", "кибер ресурсы", "ресурсы сервера нооттроп", "ресурсы сервер ноотроп",
         "ресурсы ноутроп", "ресурсы неотроп", "ресурсы нотроп", "ресурсы ноотроп", "ресурсы сервера неотроп",
@@ -227,22 +258,22 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         "загрузка системы", "показатели сервера", "сервер ноотроп", "ноутроп"
     ]
     resource_commands_no_spaces = [cmd.replace(" ", "") for cmd in resource_commands]
-    
+
     if clean_cmd_no_spaces in resource_commands_no_spaces:
         try:
             cpu_percent = psutil.cpu_percent(interval=0.1)
             mem = psutil.virtual_memory()
             total_ram_gb = round(mem.total / (1024**3), 1)
             used_ram_percent = mem.percent
-            
+
             # Замер сети за 1 секунду (чтобы точно поймать трафик)
             net1 = psutil.net_io_counters()
-            time.sleep(1.0) 
+            time.sleep(1.0)
             net2 = psutil.net_io_counters()
-            
+
             sent_kbs = round(((net2.bytes_sent - net1.bytes_sent) / 1.0) / 1024, 1)
             recv_kbs = round(((net2.bytes_recv - net1.bytes_recv) / 1.0) / 1024, 1)
-            
+
             # Общий трафик за всё время работы
             total_sent_mb = round(net2.bytes_sent / (1024**2), 1)
             total_recv_mb = round(net2.bytes_recv / (1024**2), 1)
@@ -256,7 +287,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                             break
             except Exception:
                 pass
-            
+
             text_answer = (
                 f"Ресурсы вашего сервера кибер ноотроп. "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
@@ -264,7 +295,7 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 f"Текущий трафик: отдача {int(sent_kbs)} килобайт в секунду, прием {int(recv_kbs)} килобайт в секунду. "
                 f"Всего передано {total_sent_mb} мегабайт, получено {total_recv_mb} мегабайт."
             )
-            
+
             tts_answer = (
                 f"Ресурсы вашего сервера кибер ноотроп. sil <[600]> "
                 f"Процессор: {cpu_model}, загружен на {int(cpu_percent)} процентов. "
@@ -275,9 +306,12 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         except Exception:
             text_answer = "Ресурсы вашего сервера кибер ноотроп. Не удалось получить данные о системе."
             tts_answer = text_answer
-            
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": text_answer, "tts": tts_answer}}
+
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": text_answer, "tts": tts_answer}
+        }
     # ---------------------------------
 
     if is_new_session or user_text in ["меню", "модели", "какая модель"]:
@@ -286,13 +320,16 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             "Джипити — GPT-OSS 120B. Джемини — Gemini Flash. Опен Роутер — OpenRouter Free. "
             "Вернуть Алису. Какую модель подключить?"
         )
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": menu_text, "tts": menu_text}}
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": menu_text, "tts": menu_text}
+        }
 
     # --- РАСШИРЕННЫЙ СПИСОК "ВЕРНУТЬ АЛИСУ" ---
     clean_cmd = user_text.strip(".,!? ")
     clean_cmd_no_spaces = "".join(clean_cmd.split())
-    
+
     alisa_commands = [
         "вернуть алису", "вернуться к алисе", "сбросить модель", "отключить модель", "по умолчанию",
         "верни алису", "верни алиса", "вернись алиса", "верну алису", "вернуть алиса",
@@ -301,12 +338,21 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         "отключи алису", "завершить", "выйти", "хватит"
     ]
     alisa_commands_no_spaces = [cmd.replace(" ", "") for cmd in alisa_commands]
-    
+
     if clean_cmd_no_spaces in alisa_commands_no_spaces:
-        if user_id in USER_MODELS: del USER_MODELS[user_id]
-        if user_id in HISTORY: del HISTORY[user_id]
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": True, "text": "Возврат к стандартной Алисе.", "tts": "Возврат к стандартной Алисе."}}
+        if user_id in USER_MODELS:
+            del USER_MODELS[user_id]
+        if user_id in HISTORY:
+            del HISTORY[user_id]
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {
+                "end_session": True,
+                "text": "Возврат к стандартной Алисе.",
+                "tts": "Возврат к стандартной Алисе."
+            }
+        }
     # ---------------------------------------------------
 
     found_model_key = None
@@ -315,22 +361,22 @@ async def main(request: Request, background_tasks: BackgroundTasks):
         "джипити": ["джипити", "gpt", "гпт", "джи пи ти"],
         "джемини": ["джемини", "gemini", "джемени"],
         "опенроутер": [
-            "опен роутер", "опенроутер", "openrouter", "open router", 
+            "опен роутер", "опенроутер", "openrouter", "open router",
             "опэн роутер", "опэнроутер", "оупен роутер", "оупенроутер",
             "опен рутер", "опенрутер", "опен раутер", "опенраутер",
             "опен рутор", "опенрутор", "апи роутер", "апин роутер",
             "опен раутор", "опенраутор", "опен раутэр", "роутер",
-            "опен рутэр", "опэн рутер", "оупэн роутер", "опен рудэр",
+            "опен рутэр", "опэн рутер", "оупен роутер", "опен рудэр",
             "опен рудер", "опенрудер", "оупен рутер", "опэн раутер",
             "опен сервер", "опенсервер", "опен сэр вер", "опэн сервер",
             "оупен сервер", "апи сервер", "апин сервер", "опен сервэр",
-            "опен сивер", "опен север", "опенсервис", "опен сервис", 
+            "опен сивер", "опен север", "опенсервис", "опен сервис",
             "апин сэрвер", "опенсэвэр", "опенсевер", "агрегатор", "шлюз",
             "нейро сеть", "нейросеть", "open", "опен"
         ]
     }
     # ---------------------------------------------------
-    
+
     clean_text = user_text.strip(".,!? ")
     clean_text_no_spaces = "".join(clean_text.split())
 
@@ -346,44 +392,78 @@ async def main(request: Request, background_tasks: BackgroundTasks):
     if found_model_key:
         if current_model_key == found_model_key:
             answer = f"Модель {found_model_key.capitalize()} уже активна."
-            return {"version": body["version"], "session": body["session"],
-                    "response": {"end_session": False, "text": answer, "tts": answer}}
+            return {
+                "version": body["version"],
+                "session": body["session"],
+                "response": {"end_session": False, "text": answer, "tts": answer}
+            }
 
         USER_MODELS[user_id] = found_model_key
-        if session_id in CACHE: del CACHE[session_id]
-        if user_id in HISTORY: del HISTORY[user_id]
+        if session_id in CACHE:
+            del CACHE[session_id]
+        if user_id in HISTORY:
+            del HISTORY[user_id]
 
         intro_prompt = get_intro_prompt(found_model_key)
         try:
             greeting = await safe_sync_call(
-                send_request_to_provider, found_model_key, intro_prompt,
-                timeout_val=4.0, is_greeting=True, user_id=user_id
+                send_request_to_provider,
+                found_model_key,
+                intro_prompt,
+                timeout_val=4.0,
+                is_greeting=True,
+                user_id=user_id
             )
-            answer = f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». Чтобы вернуться к Алисе, скажите «вернуть алису»."
-            return {"version": body["version"], "session": body["session"],
-                    "response": {"end_session": False, "text": answer, "tts": answer}}
+            answer = (
+                f"{greeting} Чтобы вернуться к списку моделей, скажите «меню». "
+                f"Чтобы вернуться к Алисе, скажите «вернуть алису»."
+            )
+            return {
+                "version": body["version"],
+                "session": body["session"],
+                "response": {"end_session": False, "text": answer, "tts": answer}
+            }
         except Exception as e:
             if "перегружены" in str(e):
-                return {"version": body["version"], "session": body["session"],
-                        "response": {"end_session": False, "text": str(e), "tts": str(e)}}
+                return {
+                    "version": body["version"],
+                    "session": body["session"],
+                    "response": {"end_session": False, "text": str(e), "tts": str(e)}
+                }
             CACHE[session_id] = "PENDING"
-            background_tasks.add_task(fetch_background, user_id, session_id, intro_prompt, found_model_key)
-            answer = f"Подключаю модель {found_model_key.capitalize()}. Она формирует приветствие. Скажите «готово», чтобы услышать его."
-            return {"version": body["version"], "session": body["session"],
-                    "response": {"end_session": False, "text": answer, "tts": answer}}
+            background_tasks.add_task(
+                fetch_background, user_id, session_id, intro_prompt, found_model_key
+            )
+            answer = (
+                f"Подключаю модель {found_model_key.capitalize()}. "
+                f"Она формирует приветствие. Скажите «готово», чтобы услышать его."
+            )
+            return {
+                "version": body["version"],
+                "session": body["session"],
+                "response": {"end_session": False, "text": answer, "tts": answer}
+            }
 
     if user_text in ["дальше", "дальше?"]:
         if session_id in CACHE and CACHE[session_id] != "PENDING":
             chunks = CACHE[session_id]
             if chunks:
                 current_chunk = chunks.pop(0)
-                if not chunks: del CACHE[session_id]
-                else: current_chunk += "\n\nСкажи «дальше», чтобы послушать продолжение."
-                return {"version": body["version"], "session": body["session"],
-                        "response": {"end_session": False, "text": current_chunk, "tts": current_chunk}}
+                if not chunks:
+                    del CACHE[session_id]
+                else:
+                    current_chunk += "\n\nСкажи «дальше», чтобы послушать продолжение."
+                return {
+                    "version": body["version"],
+                    "session": body["session"],
+                    "response": {"end_session": False, "text": current_chunk, "tts": current_chunk}
+                }
         answer = "Нет сохраненного продолжения. Задай новый вопрос."
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": answer, "tts": answer}}
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": answer, "tts": answer}
+        }
 
     if user_text in ["готово", "готово?"]:
         if session_id in CACHE:
@@ -394,25 +474,35 @@ async def main(request: Request, background_tasks: BackgroundTasks):
                 chunks = status
                 if chunks:
                     current_chunk = chunks.pop(0)
-                    if not chunks: del CACHE[session_id]
-                    else: current_chunk += "\n\nСкажи «дальше», чтобы послушать продолжение."
+                    if not chunks:
+                        del CACHE[session_id]
+                    else:
+                        current_chunk += "\n\nСкажи «дальше», чтобы послушать продолжение."
                     answer = current_chunk
                 else:
                     answer = "Кэш пуст."
                     del CACHE[session_id]
         else:
             answer = "Нет активных фоновых задач."
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": answer, "tts": answer}}
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": answer, "tts": answer}
+        }
 
-    if session_id in CACHE: del CACHE[session_id]
+    if session_id in CACHE:
+        del CACHE[session_id]
 
     update_history(user_id, "user", user_text)
 
     try:
         answer = await safe_sync_call(
-            send_request_to_provider, current_model_key, user_text,
-            timeout_val=4.0, is_greeting=False, user_id=user_id
+            send_request_to_provider,
+            current_model_key,
+            user_text,
+            timeout_val=4.0,
+            is_greeting=False,
+            user_id=user_id
         )
         update_history(user_id, "assistant", answer)
 
@@ -423,16 +513,27 @@ async def main(request: Request, background_tasks: BackgroundTasks):
             first_chunk += "\n\nОтвет длинный, скажи «дальше», чтобы продолжить."
             answer = first_chunk
 
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": answer, "tts": answer}}
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": answer, "tts": answer}
+        }
 
     except Exception as e:
         if "перегружены" in str(e):
-            return {"version": body["version"], "session": body["session"],
-                    "response": {"end_session": False, "text": str(e), "tts": str(e)}}
+            return {
+                "version": body["version"],
+                "session": body["session"],
+                "response": {"end_session": False, "text": str(e), "tts": str(e)}
+            }
 
         CACHE[session_id] = "PENDING"
-        background_tasks.add_task(fetch_background, user_id, session_id, user_text, current_model_key)
+        background_tasks.add_task(
+            fetch_background, user_id, session_id, user_text, current_model_key
+        )
         answer = "Запрос сложный, обрабатываю в фоне. Подожди 5 секунд и спроси «Готово?»"
-        return {"version": body["version"], "session": body["session"],
-                "response": {"end_session": False, "text": answer, "tts": answer}}
+        return {
+            "version": body["version"],
+            "session": body["session"],
+            "response": {"end_session": False, "text": answer, "tts": answer}
+        }
